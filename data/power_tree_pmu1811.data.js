@@ -10,7 +10,7 @@ PT.registerData("power_tree", {
     "date": "2026-08-14",
     "author": "PowerTeam",
     "commit": "1811",
-    "changelog": "严格按 pmu_1811_power_map.md 建模: 4 组对偶 / 2 子母线 / 7 SW / 2 VMIC"
+    "changelog": "严格按 pmu_1811_power_map.md 建模: 4 组对偶 / 2 子母线 / 7 SW / 2 VMIC; 修正: 对偶不建功率边(改 note 标注), 对偶轨下挂统一挂 LDO 侧(芯片默认 LDO 工作), BUCK_01/03 与 SoC 负载电压对齐轨道, 级联标注 CH_BUCK03_SUB"
   },
 
   "modes": [
@@ -31,6 +31,14 @@ PT.registerData("power_tree", {
     { "id": "pd_usb",      "name_zh": "PD_USB",        "kind": "domain", "parent": "soc_dig" }
   ],
 
+  /* 对偶外框 (§5): BUCK/LDO 输出短接的并联对偶组, 渲染浅外框, 布局视为整体 */
+  "pair_groups": [
+    { "id": "PAIR_01", "label": "对偶组1 BUCK_01+LDO_01", "members": ["BUCK_01", "LDO_01"] },
+    { "id": "PAIR_02", "label": "对偶组2 BUCK_02+LDO_02", "members": ["BUCK_02", "LDO_02"] },
+    { "id": "PAIR_03", "label": "对偶组3 BUCK_03+LDO_03", "members": ["BUCK_03", "LDO_03"] },
+    { "id": "PAIR_06", "label": "跨列对偶 BUCK_06+LDO_06", "members": ["BUCK_06", "LDO_06"] }
+  ],
+
   "nodes": [
     /* ===== 源 ===== */
     { "id": "VSYS", "type": "source", "name": "VSYS 系统电源",
@@ -47,12 +55,12 @@ PT.registerData("power_tree", {
     /* 对偶组 1: BUCK_01 ↔ LDO_01 */
     { "id": "BUCK_01", "type": "buck", "name": "BUCK_01",
       "group": "pmic1811", "refdes": "0x015",
-      "vin_range": [2.7, 5.5], "vout": 0.9, "vout_range": [0.313, 1.234], "vout_tol_pct": 3,
-      "dvfs": { "active": 0.9, "dsleep": 0.7, "rc": 0.65 },
+      "vin_range": [2.7, 5.5], "vout": 0.8, "vout_range": [0.313, 1.234], "vout_tol_pct": 3,
+      "dvfs": { "active": 0.8, "dsleep": 0.7, "rc": 0.65 },
       "imax": 1500, "iq_ua": 30, "efficiency": 0.88,
       "enable": { "src": "PMU_SEQ", "signal": "EN_BUCK01", "order": 2, "delay_ms": 1, "ramp_ms": 0.5, "pg": true },
       "on_in_modes": ["active", "dsleep", "rc", "lp"],
-      "cascade": { "chain_id": "CH_PAIR1", "stage": 1 },
+      "note": "与 LDO_01 输出短接成对偶轨 LDO_01&BUCK_01 (§5 互斥使能); 芯片默认 pu=0, 由 LDO_01 侧工作; vout 取 §9 寄存器默认 0x86≈0.795V",
       "tags": ["对偶1", "BUCK"] },
 
     { "id": "LDO_01", "type": "ldo", "name": "LDO_01 (对偶 BUCK_01)",
@@ -61,8 +69,7 @@ PT.registerData("power_tree", {
       "dropout_mv": 150, "imax": 400, "iq_ua": 15,
       "enable": { "src": "PMU_SEQ", "signal": "EN_LDO01", "order": 3, "delay_ms": 1 },
       "on_in_modes": ["active", "dsleep", "rc", "lp"],
-      "cascade": { "chain_id": "CH_PAIR1", "stage": 1 },
-      "parallel_group": "PAIR_01",
+      "note": "与 BUCK_01 输出短接成对偶轨 LDO_01&BUCK_01 (§5 互斥使能); 芯片默认 pu=1 本侧工作, SW1/SW7 挂本轨",
       "tags": ["对偶1", "LDO"] },
 
     /* 对偶组 2: BUCK_02 ↔ LDO_02 */
@@ -73,7 +80,7 @@ PT.registerData("power_tree", {
       "imax": 2000, "iq_ua": 30, "efficiency": 0.9,
       "enable": { "src": "PMU_SEQ", "signal": "EN_BUCK02", "order": 4, "delay_ms": 1, "ramp_ms": 0.5, "pg": true },
       "on_in_modes": ["active", "dsleep", "rc", "lp"],
-      "cascade": { "chain_id": "CH_PAIR2", "stage": 1 },
+      "note": "与 LDO_02 输出短接成对偶轨 LDO_02&BUCK_02 (§5 互斥使能); 芯片默认 pu=0, 由 LDO_02 侧工作; vout 1.2≈§9 寄存器默认 0x50→1.19V",
       "tags": ["对偶2", "BUCK"] },
 
     { "id": "LDO_02", "type": "ldo", "name": "LDO_02 (对偶 BUCK_02)",
@@ -82,8 +89,7 @@ PT.registerData("power_tree", {
       "dropout_mv": 150, "imax": 300, "iq_ua": 12,
       "enable": { "src": "PMU_SEQ", "signal": "EN_LDO02", "order": 5, "delay_ms": 1 },
       "on_in_modes": ["active", "dsleep", "rc", "lp"],
-      "cascade": { "chain_id": "CH_PAIR2", "stage": 1 },
-      "parallel_group": "PAIR_02",
+      "note": "与 BUCK_02 输出短接成对偶轨 LDO_02&BUCK_02 (§5 互斥使能); 芯片默认 pu=1 本侧工作, LDO_12/SW2/LDO_06 挂本轨",
       "tags": ["对偶2", "LDO"] },
 
     /* 对偶组 3: BUCK_03 ↔ LDO_03 */
@@ -94,7 +100,8 @@ PT.registerData("power_tree", {
       "imax": 2500, "iq_ua": 30, "efficiency": 0.9,
       "enable": { "src": "PMU_SEQ", "signal": "EN_BUCK03", "order": 6, "delay_ms": 1, "ramp_ms": 0.5, "pg": true },
       "on_in_modes": ["active", "dsleep", "rc", "lp"],
-      "cascade": { "chain_id": "CH_PAIR3", "stage": 1 },
+      "cascade": { "chain_id": "CH_BUCK03_SUB", "stage": 1 },
+      "note": "与 LDO_03 输出短接成对偶轨 LDO_03&BUCK_03 (§5 互斥使能); 同时是 LDO_07~11 级联子树源 (§4.3), vout 1.5V 满足子树最高 1.2V+压差",
       "tags": ["对偶3", "BUCK", "级联源"] },
 
     { "id": "LDO_03", "type": "ldo", "name": "LDO_03 (对偶 BUCK_03)",
@@ -103,8 +110,7 @@ PT.registerData("power_tree", {
       "dropout_mv": 150, "imax": 350, "iq_ua": 12,
       "enable": { "src": "PMU_SEQ", "signal": "EN_LDO03", "order": 7, "delay_ms": 1 },
       "on_in_modes": ["active", "dsleep", "rc", "lp"],
-      "cascade": { "chain_id": "CH_PAIR3", "stage": 1 },
-      "parallel_group": "PAIR_03",
+      "note": "与 BUCK_03 输出短接成对偶轨 LDO_03&BUCK_03 (§5 互斥使能); 芯片默认 pu=1 本侧工作, SW3/SW4 挂本轨",
       "tags": ["对偶3", "LDO"] },
 
     /* 独立 BUCK: BUCK_04 */
@@ -132,8 +138,7 @@ PT.registerData("power_tree", {
       "imax": 1500, "iq_ua": 30, "efficiency": 0.88,
       "enable": { "src": "PMU_SEQ", "signal": "EN_BUCK06", "order": 10, "delay_ms": 1 },
       "on_in_modes": ["active", "dsleep", "lp"],
-      "cascade": { "chain_id": "CH_PAIR6", "stage": 1 },
-      "parallel_group": "PAIR_06",
+      "note": "与 LDO_06 跨列对偶 (§5 互斥使能, 输出短接); 芯片默认 pu=0, 由 LDO_06 侧工作",
       "tags": ["跨列对偶", "BUCK"] },
 
     /* ===== 挂在对偶短接轨上的 L2 节点 ===== */
@@ -150,11 +155,10 @@ PT.registerData("power_tree", {
     { "id": "LDO_06", "type": "ldo", "name": "LDO_06 (跨列对偶 BUCK_06)",
       "group": "pmic1811", "refdes": "0x009",
       "vin_range": [1.5, 5.5], "vout": 0.74, "vout_range": [0.599, 1.219],
-      "dropout_mv": 150, "imax": 300, "iq_ua": 12,
+      "dropout_mv": 50, "imax": 300, "iq_ua": 12,
       "enable": { "src": "PMU_SEQ", "signal": "EN_LDO06", "order": 12, "delay_ms": 0.5 },
       "on_in_modes": ["active", "dsleep", "lp"],
-      "cascade": { "chain_id": "CH_PAIR6", "stage": 1 },
-      "parallel_group": "PAIR_06",
+      "note": "VIN 来自对偶轨 LDO_02&BUCK_02 (§3); 与 BUCK_06 跨列对偶 (§5 互斥使能); 芯片默认 pu=1 本侧工作",
       "tags": ["跨列对偶", "LDO"] },
 
     /* BUCK_03 级联子树 (5 个 LDO) */
@@ -244,10 +248,11 @@ PT.registerData("power_tree", {
     /* ===== LDO_13 (单模块源, VSYS 直供) ===== */
     { "id": "LDO_13", "type": "ldo", "name": "LDO_13 (SW5/6 源)",
       "group": "pmic1811", "refdes": "0x00C",
-      "vin_range": [1.5, 5.5], "vout": 1.78, "vout_range": [1.0, 3.3],
+      "vin_range": [1.5, 5.5], "vout": 3.3, "vout_range": [1.0, 3.3],
       "dropout_mv": 150, "imax": 400, "iq_ua": 15,
       "enable": { "src": "PMU_SEQ", "signal": "EN_LDO13", "order": 23, "delay_ms": 0.5 },
       "on_in_modes": ["active"],
+      "note": "SW5/SW6 单模块源 (§4.3); 下游为 vusb33 域 (§6), 故 vout 取 3.3V (寄存器默认 0x15≈1.78V)",
       "tags": ["L1", "SW5/6源"] },
 
     /* ===== SW (7 个, §6) ===== */
@@ -310,7 +315,7 @@ PT.registerData("power_tree", {
 
     /* ===== 下游负载 (SoC 侧) ===== */
     { "id": "SOC_CORE", "type": "load", "name": "SoC 核心域",
-      "group": "pd_core", "domain": "PD_CORE", "voltage": 0.9,
+      "group": "pd_core", "domain": "PD_CORE", "voltage": 0.8,
       "current": {
         "active":  { "typ": 800,  "max": 1200 },
         "dsleep":  { "typ": 50,   "max": 80 },
@@ -321,7 +326,7 @@ PT.registerData("power_tree", {
       "iso_signal": "ISO_CORE", "reset_signal": "RST_CORE" },
 
     { "id": "SOC_PERI", "type": "load", "name": "SoC 外设域",
-      "group": "pd_peri", "domain": "PD_PERI", "voltage": 1.8,
+      "group": "pd_peri", "domain": "PD_PERI", "voltage": 1.0,
       "current": {
         "active":  { "typ": 300, "max": 500 },
         "dsleep":  { "typ": 20,  "max": 30 },
@@ -332,7 +337,7 @@ PT.registerData("power_tree", {
       "iso_signal": "ISO_PERI", "reset_signal": "RST_PERI" },
 
     { "id": "MIC_A", "type": "load", "name": "麦克风 A",
-      "group": "pd_mic", "domain": "PD_MIC", "voltage": 2.0,
+      "group": "pd_mic", "domain": "PD_MIC", "voltage": 2.01,
       "current": {
         "active":  { "typ": 2, "max": 4 },
         "dsleep":  { "typ": 0, "max": 0 },
@@ -342,7 +347,7 @@ PT.registerData("power_tree", {
       } },
 
     { "id": "MIC_B", "type": "load", "name": "麦克风 B",
-      "group": "pd_mic", "domain": "PD_MIC", "voltage": 2.0,
+      "group": "pd_mic", "domain": "PD_MIC", "voltage": 2.01,
       "current": {
         "active":  { "typ": 2, "max": 4 },
         "dsleep":  { "typ": 0, "max": 0 },
@@ -361,8 +366,8 @@ PT.registerData("power_tree", {
         "off":     { "typ": 0,   "max": 0 }
       } },
 
-    { "id": "SENSOR_1V8", "type": "load", "name": "1.8V 传感器",
-      "group": "pd_peri", "domain": "PD_PERI", "voltage": 1.8,
+    { "id": "SENSOR_1V8", "type": "load", "name": "0.8V 传感器 (SW1 轨)",
+      "group": "pd_peri", "domain": "PD_PERI", "voltage": 0.79,
       "current": {
         "active":  { "typ": 50, "max": 100 },
         "dsleep":  { "typ": 5,  "max": 10 },
@@ -394,25 +399,23 @@ PT.registerData("power_tree", {
     { "from": "vdd_l14_15", "to": "LDO_VMIC2", "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
     { "from": "vdd_l5",     "to": "LDO_05",    "type": "power", "net": "vdd_l5",     "trace_r_mohm": 1 },
 
-    /* ===== 对偶短接轨 (§4.2) ===== */
-    /* BUCK_01 & LDO_01 短接 → SW1, SW7 */
-    { "from": "BUCK_01", "to": "LDO_01", "type": "power", "net": "LDO_01&BUCK_01", "trace_r_mohm": 0.5 },
-    { "from": "BUCK_01", "to": "SW1", "type": "power", "net": "LDO_01&BUCK_01", "trace_r_mohm": 1 },
-    { "from": "BUCK_01", "to": "SW7", "type": "power", "net": "LDO_01&BUCK_01", "trace_r_mohm": 1 },
+    /* ===== 对偶短接轨 (§4.2) =====
+     * 对偶 = BUCK/LDO 输出对输出短接, 非功率流边, 不建边 (避免多父/环路);
+     * 短接关系写在节点 note; 下挂统一挂 LDO 侧 (芯片默认 LDO pu=1 / BUCK pu=0) */
+    /* LDO_01&BUCK_01 短接轨 → SW1, SW7 */
+    { "from": "LDO_01", "to": "SW1", "type": "power", "net": "LDO_01&BUCK_01", "trace_r_mohm": 1 },
+    { "from": "LDO_01", "to": "SW7", "type": "power", "net": "LDO_01&BUCK_01", "trace_r_mohm": 1 },
 
-    /* BUCK_02 & LDO_02 短接 → LDO_12, SW2, LDO_06 */
-    { "from": "BUCK_02", "to": "LDO_02", "type": "power", "net": "LDO_02&BUCK_02", "trace_r_mohm": 0.5 },
-    { "from": "BUCK_02", "to": "LDO_12", "type": "power", "net": "LDO_02&BUCK_02", "trace_r_mohm": 1 },
-    { "from": "BUCK_02", "to": "SW2",    "type": "power", "net": "LDO_02&BUCK_02", "trace_r_mohm": 1 },
-    { "from": "BUCK_02", "to": "LDO_06", "type": "power", "net": "LDO_02&BUCK_02", "trace_r_mohm": 1 },
+    /* LDO_02&BUCK_02 短接轨 → LDO_12, SW2, LDO_06 */
+    { "from": "LDO_02", "to": "LDO_12", "type": "power", "net": "LDO_02&BUCK_02", "trace_r_mohm": 1 },
+    { "from": "LDO_02", "to": "SW2",    "type": "power", "net": "LDO_02&BUCK_02", "trace_r_mohm": 1 },
+    { "from": "LDO_02", "to": "LDO_06", "type": "power", "net": "LDO_02&BUCK_02", "trace_r_mohm": 1 },
 
-    /* BUCK_03 & LDO_03 短接 → SW3, SW4 */
-    { "from": "BUCK_03", "to": "LDO_03", "type": "power", "net": "LDO_03&BUCK_03", "trace_r_mohm": 0.5 },
-    { "from": "BUCK_03", "to": "SW3",    "type": "power", "net": "LDO_03&BUCK_03", "trace_r_mohm": 1 },
-    { "from": "BUCK_03", "to": "SW4",    "type": "power", "net": "LDO_03&BUCK_03", "trace_r_mohm": 1 },
+    /* LDO_03&BUCK_03 短接轨 → SW3, SW4 */
+    { "from": "LDO_03", "to": "SW3",    "type": "power", "net": "LDO_03&BUCK_03", "trace_r_mohm": 1 },
+    { "from": "LDO_03", "to": "SW4",    "type": "power", "net": "LDO_03&BUCK_03", "trace_r_mohm": 1 },
 
-    /* BUCK_06 & LDO_06 跨列短接 (无下挂) */
-    { "from": "BUCK_06", "to": "LDO_06", "type": "power", "net": "LDO_06&BUCK_06", "trace_r_mohm": 0.5 },
+    /* LDO_06&BUCK_06 跨列短接 (无下挂, §4.2) — 不建边 */
 
     /* ===== BUCK_03 级联子树 (§4.3) ===== */
     { "from": "BUCK_03", "to": "LDO_07", "type": "power", "net": "VDD_BUCK03_SUB", "trace_r_mohm": 2 },

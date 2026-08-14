@@ -30,6 +30,9 @@
     this.selectedNodeIds = new Set();
     this.highlightNodeIds = null;   // null=不高亮; Set=高亮这些
     this.fadedNodeIds = null;
+    this.selectedEdgeId = null;        // 选中的边 id
+    this.highlightEdgeIds = null;      // Set=高亮这些边 (同 net/signal 追踪)
+    this.highlightEdgeNodeIds = null;  // 高亮边两端的节点
 
     this._build();
     this._bindEvents();
@@ -158,9 +161,29 @@
       }
     });
 
+    // 边点击 (事件委托: 主线/干线/命中区/标签/结点/跳线都带 data-edge-id)
+    this.edgeLayer.addEventListener("click", function (ev) {
+      var t = ev.target;
+      while (t && t !== self.edgeLayer) {
+        if (t.getAttribute) {
+          var eid = t.getAttribute("data-edge-id");
+          if (eid) {
+            ev.stopPropagation();
+            self.onEdgeClick(eid, ev);
+            return;
+          }
+        }
+        t = t.parentNode;
+      }
+    });
+
     // 背景点击
     this.svg.addEventListener("click", function (ev) {
       if (ev.target === self.svg || ev.target === self.viewport) {
+        // 清边选中 (视图回调会触发重绘)
+        self.selectedEdgeId = null;
+        self.highlightEdgeIds = null;
+        self.highlightEdgeNodeIds = null;
         self.onBackgroundClick();
       }
     });
@@ -313,11 +336,28 @@
       (elkGroup.children || []).forEach(function (child) {
         if (child.__isGroup) {
           renderGroup(child, gx, gy);
+        } else if (child.__isPair) {
+          renderPair(child, gx, gy);
         } else if (child.__collapsed) {
           renderCollapsed(child, gx, gy);
         } else if (child.__node) {
           renderNode(child, gx, gy);
         }
+      });
+    }
+
+    // 对偶组容器: 浅外框 + 标签 + 成员 (坐标相对 pair 容器)
+    function renderPair(elkPair, ox, oy) {
+      var px = (elkPair.x || 0) + ox;
+      var py = (elkPair.y || 0) + oy;
+      var g = document.createElementNS(SVG_NS, "g");
+      g.setAttribute("transform", "translate(" + px + "," + py + ")");
+      g.setAttribute("class", "pt-pair");
+      g.setAttribute("data-pair-id", elkPair.__pairId);
+      PT.nodeShapes.renderPairBox(g, elkPair, self.ctx);
+      self.groupLayer.appendChild(g);
+      (elkPair.children || []).forEach(function (m) {
+        if (m.__node) renderNode(m, px, py);
       });
     }
 
@@ -336,6 +376,10 @@
       if (self.highlightNodeIds && !self.highlightNodeIds.has(elkNode.id)) {
         g.setAttribute("opacity", 0.25);
       }
+      // 边选中高亮时, 不在高亮网络上的节点淡化
+      if (self.highlightEdgeNodeIds && !self.highlightEdgeNodeIds.has(elkNode.id)) {
+        g.setAttribute("opacity", 0.25);
+      }
 
       // 把 layout 尺寸回写到节点 (renderNode 内部读 node.width/height)
       elkNode.__node.width = elkNode.width;
@@ -344,6 +388,10 @@
       PT.nodeShapes.renderNode(g, elkNode.__node, self.ctx);
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
+        // 点节点时清边选中 (后续回调会触发重绘)
+        self.selectedEdgeId = null;
+        self.highlightEdgeIds = null;
+        self.highlightEdgeNodeIds = null;
         self.onNodeClick(elkNode.id, ev);
       });
       g.addEventListener("dblclick", function (ev) {
@@ -375,37 +423,53 @@
 
     renderGroup(layoutData, 0, 0);
 
-    // 渲染边
-    (layoutData.edges || []).forEach(function (elkEdge) {
-      var edge = elkEdge.__edge;
-      if (!edge) return;
-      var faded = false;
-      var highlight = false;
-      if (self.highlightNodeIds) {
+    // 边视觉状态: 边选中 (同 net/signal 追踪) 优先, 其次节点路径高亮
+    function edgeState(edge) {
+      var faded = false, highlight = false;
+      if (self.highlightEdgeIds) {
+        highlight = self.highlightEdgeIds.has(edge.id);
+        faded = !highlight;
+      } else if (self.highlightNodeIds) {
         var fromIn = self.highlightNodeIds.has(edge.from);
         var toIn = self.highlightNodeIds.has(edge.to);
         faded = !(fromIn && toIn);
         highlight = fromIn && toIn && (self.selectedNodeIds.has(edge.from) || self.selectedNodeIds.has(edge.to));
       }
-      var path = PT.edgeRouter.renderEdge(self.edgeLayer, edge, elkEdge.sections, {
+      return { faded: faded, highlight: highlight };
+    }
+
+    // 渲染边 (点击走 edgeLayer 事件委托, 见 _bindEvents)
+    (layoutData.edges || []).forEach(function (elkEdge) {
+      var edge = elkEdge.__edge;
+      if (!edge) return;
+      var st = edgeState(edge);
+      var hit = PT.edgeRouter.renderEdge(self.edgeLayer, edge, elkEdge.sections, {
         showLabel: true,
         currentMa: edge.__calc && edge.__calc.i_ma,
-        faded: faded,
-        highlight: highlight
+        faded: st.faded,
+        highlight: st.highlight
       });
-      if (path) {
-        path.addEventListener("click", function (ev) {
-          ev.stopPropagation();
-          self.onEdgeClick(edge.id, ev);
-        });
-        // hover tooltip
-        path.addEventListener("mouseenter", function (ev) {
+      if (hit) {
+        // hover tooltip (返回的是加宽透明命中区)
+        hit.addEventListener("mouseenter", function (ev) {
           self._showEdgeTooltip(edge, ev);
         });
-        path.addEventListener("mouseleave", function () {
+        hit.addEventListener("mouseleave", function () {
           self._hideEdgeTooltip();
         });
       }
+    });
+
+    // 第二遍: 结点圆点 (相连) 与 跨越弧 (不相连), 压在所有边线之上
+    (layoutData.edges || []).forEach(function (elkEdge) {
+      var edge = elkEdge.__edge;
+      if (!edge) return;
+      var st = edgeState(edge);
+      PT.edgeRouter.renderEdgeDecor(self.edgeLayer, edge, elkEdge.sections, {
+        currentMa: edge.__calc && edge.__calc.i_ma,
+        faded: st.faded,
+        highlight: st.highlight
+      });
     });
 
     // 泳道
@@ -533,17 +597,57 @@
     }
   };
 
-  /** 高亮某节点的上下游子图 */
-  SvgRenderer.prototype.highlightPath = function (nodeId) {
+  /**
+   * 高亮某节点的上下游子图
+   * @param {string|null} nodeId
+   * @param {boolean} defer  true=只设置状态不重绘 (调用方随后自行 render)
+   */
+  SvgRenderer.prototype.highlightPath = function (nodeId, defer) {
     if (!this.graph) return;
+    // 与边选中互斥
+    this.selectedEdgeId = null;
+    this.highlightEdgeIds = null;
+    this.highlightEdgeNodeIds = null;
     if (!nodeId) {
       this.highlightNodeIds = null;
-      return;
+    } else {
+      var ups = this.graph.powerAncestors(nodeId);
+      var downs = this.graph.powerSubtree(nodeId);
+      var set = new Set(ups.concat(downs));
+      this.highlightNodeIds = set;
     }
-    var ups = this.graph.powerAncestors(nodeId);
-    var downs = this.graph.powerSubtree(nodeId);
-    var set = new Set(ups.concat(downs));
-    this.highlightNodeIds = set;
+    // 立即重绘应用高亮
+    if (!defer && this.layoutData) this.render(this.graph, this.layoutData, this.ctx);
+  };
+
+  /**
+   * 选中/高亮一条边: 同 net 的 power 边 (或同 signal 的 control 边) 一起高亮,
+   * 其余边与无关节点淡化; 再点同一条边或传 null 取消。
+   */
+  SvgRenderer.prototype.selectEdge = function (edgeId) {
+    if (edgeId && this.selectedEdgeId === edgeId) edgeId = null;   // 再点取消
+    this.selectedEdgeId = edgeId || null;
+    this.highlightEdgeIds = null;
+    this.highlightEdgeNodeIds = null;
+    if (edgeId && this.graph) {
+      var hit = null;
+      this.graph.edges.forEach(function (e) { if (e.id === edgeId) hit = e; });
+      if (hit) {
+        var isCtl = hit.type === "control";
+        var set = new Set();
+        var nodes = new Set();
+        this.graph.edges.forEach(function (e) {
+          var match = isCtl
+            ? (e.type === "control" && (hit.signal ? e.signal === hit.signal : e.id === hit.id))
+            : (e.type !== "control" && (hit.net ? e.net === hit.net : e.id === hit.id));
+          if (match) { set.add(e.id); nodes.add(e.from); nodes.add(e.to); }
+        });
+        this.highlightEdgeIds = set;
+        this.highlightEdgeNodeIds = nodes;
+        this.highlightNodeIds = null;   // 与节点路径高亮互斥
+      }
+    }
+    if (this.layoutData && this.graph) this.render(this.graph, this.layoutData, this.ctx);
   };
 
   /** 仅看子树 */

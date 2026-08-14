@@ -45,10 +45,11 @@
     // 依据类型返回 {width, height}
     switch (node.type) {
       case "source":      return { width: 140, height: 56 };
-      case "buck":        return { width: 180, height: 88 };
-      case "boost":       return { width: 180, height: 88 };
-      case "buck_boost":  return { width: 180, height: 88 };
-      case "ldo":         return { width: 180, height: 88 };
+      // 模块卡片 (BUCK/LDO 系列): 紧凑尺寸 = 原 180x88 的 2/3
+      case "buck":        return { width: 120, height: 58 };
+      case "boost":       return { width: 120, height: 58 };
+      case "buck_boost":  return { width: 120, height: 58 };
+      case "ldo":         return { width: 120, height: 58 };
       case "load_switch": return { width: 160, height: 72 };
       case "efuse":       return { width: 150, height: 64 };
       case "ideal_diode": return { width: 150, height: 64 };

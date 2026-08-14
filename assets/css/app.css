@@ -228,6 +228,12 @@ html, body {
 
 .pt-group-box { cursor: pointer; }
 
+/* 连线交互: 可选中 + 加宽命中区 */
+.pt-edge { cursor: pointer; }
+.pt-edge-hit { cursor: pointer; }
+/* 跨越弧遮蔽: 用画布底色盖住被跨越的线 (深色主题在 theme-dark.css 覆盖; 导出走 export-svg 内嵌) */
+.pt-edge-hop-mask { stroke: #fafafa; }
+
 .pt-minimap {
   position: absolute;
   right: 12px; bottom: 12px;

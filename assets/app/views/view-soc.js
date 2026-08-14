@@ -41,11 +41,15 @@
         // 双击回跳板级视图
         PT.store.set({ view: "board", selectedNodeId: id, focusNodeId: id });
       },
+      onEdgeClick: function (edgeId) {
+        // 选中边: 同 net 连线高亮, 其余淡化 (再点/点背景取消)
+        self.renderer.selectEdge(edgeId);
+      },
       onBackgroundClick: function () {
         PT.store.set({ selectedNodeId: null });
         self.renderer.selectedNodeIds.clear();
         self.renderer._refreshSelection();
-        self.renderer.highlightPath(null);
+        self.renderer.highlightPath(null, true);
         self.refresh();
       }
     });

@@ -15,6 +15,11 @@ PT.registerData("config", {
     "ldo_loss_warn_mw": 500,
     "vdrop_tol_pct_default": 5
   },
+  "netNaming": {
+    "vinLabel": true,
+    "moduleTypes": ["buck", "boost", "buck_boost", "ldo", "load_switch", "efuse", "ideal_diode", "level_shifter"],
+    "pattern": "{net}_{node}"
+  },
   "watermark": {
     "enabled": true,
     "text": "CONFIDENTIAL · {project} · {version}"

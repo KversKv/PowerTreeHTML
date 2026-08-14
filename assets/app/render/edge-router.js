@@ -63,21 +63,117 @@
    * @param {Array} sections ELK 布局段
    * @param {object} ctx { showLabel, currentMa, faded }
    */
+  /** 把 sections 转成 path, branchOnly=true 时跳过竖直段 (由共享干线承载者画) */
+  function sectionsToPathBranch(sections, branchOnly) {
+    if (!sections || !sections.length) return "";
+    var d = "";
+    sections.forEach(function (sec) {
+      var pts = [];
+      if (sec.startPoint) pts.push(sec.startPoint);
+      if (Array.isArray(sec.bendPoints)) pts = pts.concat(sec.bendPoints);
+      if (sec.endPoint) pts.push(sec.endPoint);
+      if (pts.length < 2) return;
+      if (!branchOnly) {
+        d += "M " + pts[0].x + " " + pts[0].y;
+        for (var i = 1; i < pts.length; i++) d += " L " + pts[i].x + " " + pts[i].y;
+        return;
+      }
+      // branchOnly: 源水平段 (pts[0]→pts[1]) 与 目标水平段 (倒数第2→末点), 竖直段跳过
+      if (pts.length >= 2) {
+        d += "M " + pts[0].x + " " + pts[0].y + " L " + pts[1].x + " " + pts[1].y;
+        var n = pts.length;
+        d += " M " + pts[n - 2].x + " " + pts[n - 2].y + " L " + pts[n - 1].x + " " + pts[n - 1].y;
+      }
+    });
+    return d;
+  }
+
+  /** netNaming 配置 (Vin 标签规则, 可在 data/config.data.js 调整) */
+  function _netNaming() {
+    var cfg = (PT.store && PT.store.config) || {};
+    var nn = cfg.netNaming || {};
+    return {
+      enabled: nn.vinLabel !== false,
+      types: nn.moduleTypes || ["buck", "boost", "buck_boost", "ldo", "load_switch", "efuse", "ideal_diode", "level_shifter"],
+      pattern: nn.pattern || "{net}_{node}"
+    };
+  }
+
+  /**
+   * 模块输入网络名 (Vin 标签):
+   * 显式 node.vin_net 优先, 否则按 netNaming.pattern 推导 (缺省 "{net}_{node}", 如 VSYS_BUCK_03)。
+   * 仅 power 边且目标类型属于 moduleTypes 时返回非空; 电气连接仍走 edge.net, 只改显示。
+   */
+  function vinNetName(edge) {
+    var nn = _netNaming();
+    if (!nn.enabled) return null;
+    if (!edge || edge.type === "control" || !edge.net) return null;
+    var graph = PT.store && PT.store.graph;
+    var tnode = graph && graph.node ? graph.node(edge.to) : null;
+    if (!tnode || nn.types.indexOf(tnode.type) < 0) return null;
+    if (tnode.vin_net) return tnode.vin_net;
+    return nn.pattern
+      .replace("{net}", edge.net)
+      .replace("{node}", tnode.id)
+      .replace("{from}", edge.from);
+  }
+
   function renderEdge(g, edge, sections, ctx) {
     ctx = ctx || {};
-    var d = sectionsToPath(sections);
+    var branchOnly = sections && sections[0] && sections[0].__branchOnly;
+    var d = branchOnly ? sectionsToPathBranch(sections, true) : sectionsToPath(sections);
     if (!d) return null;
 
     var isControl = edge.type === "control";
     var subColor = isControl ? (SUB_COLORS[edge.sub] || "#607d8b") : "#546e7a";
     var currentMa = ctx.currentMa != null ? ctx.currentMa : ((edge.__calc && edge.__calc.i_ma) || 0);
     var strokeW = isControl ? 1.2 : widthForCurrent(currentMa);
+    var edgeColor = ctx.highlight ? "#ff5722" : subColor;
+
+    // 透明加宽命中区 (点击/hover 用), 细线也能可靠点中
+    function hitPath(dPath) {
+      return _el("path", {
+        d: dPath, fill: "none", stroke: "rgba(0,0,0,0)",
+        "stroke-width": Math.max(strokeW + 4, 10),
+        "pointer-events": "stroke",
+        "class": "pt-edge-hit", "data-edge-id": edge.id
+      }, g);
+    }
+
+    // 共享干线: 承载者画整段竖直干线 (细线), 只画一次
+    if (edge.__trunk) {
+      var tk = edge.__trunk;
+      var trunkD = "M " + tk.x + " " + tk.y1 + " L " + tk.x + " " + tk.y2;
+      _el("path", {
+        d: trunkD,
+        fill: "none", stroke: edgeColor, "stroke-width": 1.4,
+        "class": "pt-edge pt-edge-trunk", "data-edge-id": edge.id,
+        opacity: ctx.faded ? 0.15 : null
+      }, g);
+      hitPath(trunkD);
+    }
+
+    // 总线干线: 同源扇出的首条边负责画 "源→竖直干线" (只做一次)
+    if (edge.__bus && edge.__bus.first) {
+      var b = edge.__bus;
+      var busD = "M " + b.sx + " " + b.sy +
+                 " L " + b.busX + " " + b.sy +
+                 " L " + b.busX + " " + b.busY1 +
+                 " M " + b.busX + " " + b.sy +
+                 " L " + b.busX + " " + b.busY2;
+      _el("path", {
+        d: busD, fill: "none", stroke: edgeColor,
+        "stroke-width": strokeW + 0.6, "class": "pt-edge pt-edge-bus", "data-edge-id": edge.id,
+        opacity: ctx.faded ? 0.15 : null
+      }, g);
+      hitPath(busD);
+    }
 
     var attrs = {
       d: d,
       fill: "none",
-      stroke: subColor,
-      "stroke-width": strokeW,
+      stroke: edgeColor,
+      "stroke-width": ctx.highlight ? strokeW + 1 : strokeW,
       "class": "pt-edge pt-edge-" + (isControl ? "control" : "power"),
       "data-edge-id": edge.id
     };
@@ -87,11 +183,8 @@
     if (ctx.faded) {
       attrs.opacity = 0.15;
     }
-    if (ctx.highlight) {
-      attrs.stroke = "#ff5722";
-      attrs["stroke-width"] = strokeW + 1;
-    }
-    var path = _el("path", attrs, g);
+    _el("path", attrs, g);
+    var hit = hitPath(d);
 
     // inline 无源元件标记
     if (!isControl && Array.isArray(edge.inline) && edge.inline.length && sections && sections.length) {
@@ -119,15 +212,31 @@
       }
     }
 
-    // 标签 (net / 电流)
+    // 标签 (net / 电流 / Vin 输入网络名)
     if (ctx.showLabel && sections && sections.length) {
       var sec2 = sections[0];
-      if (sec2.startPoint && sec2.endPoint) {
+      var vinName = isControl ? null : vinNetName(edge);
+
+      if (vinName && sec2.endPoint) {
+        // Vin 标签: 锚在目标模块输入引脚处 (目标端上方, 右对齐)
+        // 显示模块输入网络名 (如 VSYS_BUCK_03), 而不是前级输出网络名
+        var ep = sec2.endPoint;
+        var vparts = [vinName];
+        if (currentMa > 0) vparts.push(PT.util.fmt(currentMa) + "mA");
+        var vlabel = _el("text", {
+          x: ep.x - 6, y: ep.y - 5, "font-size": 9,
+          fill: ctx.highlight ? "#e64a19" : "#37474f",
+          "text-anchor": "end", "class": "pt-edge-vin-label", "data-edge-id": edge.id
+        }, g);
+        vlabel.textContent = vparts.join(" · ");
+      } else if (sec2.startPoint && sec2.endPoint) {
+        // 常规中点标签 (非模块目标 / 控制边)
         var mx = (sec2.startPoint.x + sec2.endPoint.x) / 2;
         var my = (sec2.startPoint.y + sec2.endPoint.y) / 2;
         var label = _el("text", {
-          x: mx, y: my - 4, "font-size": 9, fill: "#616161",
-          "text-anchor": "middle", "class": "pt-edge-label"
+          x: mx, y: my - 4, "font-size": 9,
+          fill: ctx.highlight ? "#e64a19" : "#616161",
+          "text-anchor": "middle", "class": "pt-edge-label", "data-edge-id": edge.id
         }, g);
         var parts = [];
         if (edge.net) parts.push(edge.net);
@@ -135,9 +244,82 @@
         if (isControl && edge.signal) parts.push(edge.signal);
         label.textContent = parts.join(" · ");
       }
+
+      // 上游 net 标签: 总线首边画在源短接中点 / 共享干线承载者画在干线顶端。
+      // 分支与 Vin 标签只含模块输入网络名, 此处保证上游网络名 (如 VSYS) 仍可追溯。
+      if (!isControl && edge.net) {
+        if (edge.__bus && edge.__bus.first) {
+          var bb = edge.__bus;
+          var nlabel = _el("text", {
+            x: (bb.sx + bb.busX) / 2, y: bb.sy - 6, "font-size": 9,
+            fill: ctx.highlight ? "#e64a19" : "#616161",
+            "text-anchor": "middle", "class": "pt-edge-label pt-edge-net-label", "data-edge-id": edge.id
+          }, g);
+          nlabel.textContent = edge.net;
+        } else if (edge.__trunk && edge.__trunk.shared) {
+          var tk2 = edge.__trunk;
+          var tlabel = _el("text", {
+            x: tk2.x, y: tk2.y1 - 6, "font-size": 9,
+            fill: ctx.highlight ? "#e64a19" : "#616161",
+            "text-anchor": "middle", "class": "pt-edge-label pt-edge-net-label", "data-edge-id": edge.id
+          }, g);
+          tlabel.textContent = edge.net;
+        }
+      }
     }
 
-    return path;
+    return hit;
+  }
+
+  /**
+   * 边装饰 (由渲染器第二遍调用, 保证压在所有边线之上):
+   * - T 型结点圆点 (pt-edge-dot)  = 电气相连: 总线分支接干线 / 同网共享干线接点
+   * - 跨越弧 (pt-edge-hop)        = 异网十字交叉但不相连 (布局阶段检测, __hops)
+   */
+  function renderEdgeDecor(g, edge, sections, ctx) {
+    ctx = ctx || {};
+    if (edge.type === "control") return;   // 控制虚线不画结点/跳线
+    var currentMa = ctx.currentMa != null ? ctx.currentMa : ((edge.__calc && edge.__calc.i_ma) || 0);
+    var strokeW = widthForCurrent(currentMa);
+    var color = ctx.highlight ? "#ff5722" : "#546e7a";
+    var op = ctx.faded ? 0.15 : null;
+
+    // T 型结点 (相连)
+    var dots = [];
+    if (edge.__bus) {
+      var b = edge.__bus;
+      if (b.first) dots.push({ x: b.busX, y: b.sy });   // 源短接 × 干线
+      if (sections && sections[0] && sections[0].startPoint) {
+        dots.push({ x: sections[0].startPoint.x, y: sections[0].startPoint.y });  // 分支 × 干线
+      }
+    } else if (sections && sections[0] && sections[0].__branchOnly && Array.isArray(sections[0].bendPoints)) {
+      // 共享干线接点: 非承载者必然共享; 承载者仅在 shared 时 (独占干线只是走线拐角, 不画点)
+      var shared = edge.__trunk ? edge.__trunk.shared : true;
+      if (shared) {
+        sections[0].bendPoints.forEach(function (bp) { dots.push({ x: bp.x, y: bp.y }); });
+      }
+    }
+    dots.forEach(function (pt) {
+      _el("circle", {
+        cx: pt.x, cy: pt.y, r: 2.8, fill: color,
+        "class": "pt-edge-dot", "data-edge-id": edge.id,
+        opacity: op
+      }, g);
+    });
+
+    // 跨越弧 (不相连): 白色遮蔽被跨线 + 上半圆拱
+    (edge.__hops || []).forEach(function (hp) {
+      var hg = _el("g", { "class": "pt-edge-hop", "data-edge-id": edge.id, opacity: op }, g);
+      _el("line", {
+        x1: hp.x - 5.5, y1: hp.y, x2: hp.x + 5.5, y2: hp.y,
+        stroke: "#fafafa",   // 内联兜底 (PNG 导出无 CSS); 浏览器中由主题类覆盖
+        "stroke-width": strokeW + 3, "class": "pt-edge-hop-mask"
+      }, hg);
+      _el("path", {
+        d: "M " + (hp.x - 5) + " " + hp.y + " A 5 5 0 0 1 " + (hp.x + 5) + " " + hp.y,
+        fill: "none", stroke: color, "stroke-width": Math.max(strokeW, 1.6)
+      }, hg);
+    });
   }
 
   /**
@@ -174,6 +356,8 @@
     widthForCurrent: widthForCurrent,
     sectionsToPath: sectionsToPath,
     renderEdge: renderEdge,
+    renderEdgeDecor: renderEdgeDecor,
+    vinNetName: vinNetName,
     bundleByNet: bundleByNet
   };
 })();

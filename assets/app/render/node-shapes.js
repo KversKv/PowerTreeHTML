@@ -299,6 +299,10 @@
     var w = node.width, h = node.height;
     var rx = 6;
 
+    // 紧凑卡片: BUCK/LDO 系列只保留标题 (无第二行 id/refdes/part 描述)
+    var compact = node.type === "buck" || node.type === "boost" ||
+                  node.type === "buck_boost" || node.type === "ldo";
+
     // 卡片
     _el("rect", {
       x: 0, y: 0, width: w, height: h, rx: rx,
@@ -307,34 +311,36 @@
     }, g);
 
     // 图标
-    var iconG = _el("g", { transform: "translate(6,6)", "class": "pt-node-icon" }, g);
+    var iconG = _el("g", { transform: compact ? "translate(5,4)" : "translate(6,6)", "class": "pt-node-icon" }, g);
     _el("path", {
       d: TYPE_ICONS[node.type] || TYPE_ICONS.virtual,
       fill: "none", stroke: colors.icon, "stroke-width": 1.6,
       "stroke-linecap": "round", "stroke-linejoin": "round",
-      transform: "scale(0.75)"
+      transform: compact ? "scale(0.6)" : "scale(0.75)"
     }, iconG);
 
     // 标题
     var title = _el("text", {
-      x: 30, y: 18, "class": "pt-node-title",
-      "font-size": 12, "font-weight": 600, fill: "#212121"
+      x: compact ? 24 : 30, y: compact ? 15 : 18, "class": "pt-node-title",
+      "font-size": compact ? 11 : 12, "font-weight": 600, fill: "#212121"
     }, g);
-    title.textContent = PT.util.ellipsize(node.name || node.id, 22);
+    title.textContent = PT.util.ellipsize(node.name || node.id, compact ? 14 : 22);
 
-    // id / refdes
-    var sub = _el("text", {
-      x: 30, y: 32, "class": "pt-node-sub",
-      "font-size": 10, fill: "#616161"
-    }, g);
-    var subText = node.id;
-    if (node.refdes) subText += " · " + node.refdes;
-    if (node.part) subText += " · " + node.part;
-    sub.textContent = PT.util.ellipsize(subText, 30);
+    if (!compact) {
+      // id / refdes (第二行描述, 紧凑卡片不画)
+      var sub = _el("text", {
+        x: 30, y: 32, "class": "pt-node-sub",
+        "font-size": 10, fill: "#616161"
+      }, g);
+      var subText = node.id;
+      if (node.refdes) subText += " · " + node.refdes;
+      if (node.part) subText += " · " + node.part;
+      sub.textContent = PT.util.ellipsize(subText, 30);
+    }
 
     // 电气参数
     var line3 = _el("text", {
-      x: 6, y: 48, "font-size": 10, fill: "#424242"
+      x: 6, y: compact ? 33 : 48, "font-size": compact ? 9 : 10, fill: "#424242"
     }, g);
     var vout = PT.engine.nodeVout(node, ctx.modeId);
     var params = [];
@@ -345,8 +351,8 @@
 
     // 利用率条
     var util = node.__calc && node.__calc.utilization;
-    if (util != null && h >= 60) {
-      var barY = h - 14;
+    if (util != null && (compact ? h >= 48 : h >= 60)) {
+      var barY = compact ? h - 11 : h - 14;
       var barH = 5;
       var barW = w - 12;
       _el("rect", {
@@ -378,11 +384,13 @@
       badgeText.textContent = maxLevel;
     }
 
-    // DVFS 标记
+    // DVFS 标记 (紧凑卡片放右上角, 避免与参数行重叠)
     if (node.dvfs) {
       var dv = _el("text", {
-        x: 6, y: h - 20, "font-size": 8, fill: "#8e24aa", "font-style": "italic"
+        x: compact ? w - 6 : 6, y: compact ? 15 : h - 20,
+        "font-size": 8, fill: "#8e24aa", "font-style": "italic"
       }, g);
+      if (compact) dv.setAttribute("text-anchor", "end");
       dv.textContent = "DVFS";
     }
   }
@@ -441,11 +449,29 @@
     title.textContent = label;
   }
 
+  /** 对偶组外框渲染 (浅色整体框, 在 pair 容器坐标下) */
+  function renderPairBox(g, elkPair, ctx) {
+    var label = (elkPair.labels && elkPair.labels[0] && elkPair.labels[0].text) || "";
+    _el("rect", {
+      x: 0, y: 0,
+      width: elkPair.width, height: elkPair.height,
+      rx: 10, fill: "rgba(126,87,194,0.05)",
+      stroke: "#9575cd", "stroke-width": 1.2,
+      "class": "pt-pair-box"
+    }, g);
+    var title = _el("text", {
+      x: 10, y: 16, "font-size": 11, "font-weight": 600,
+      fill: "#5e35b1", "class": "pt-pair-title"
+    }, g);
+    title.textContent = label;
+  }
+
   PT.nodeShapes = {
     TYPE_COLORS: TYPE_COLORS,
     TYPE_ICONS: TYPE_ICONS,
     renderNode: renderNode,
     renderCollapsedGroup: renderCollapsedGroup,
-    renderGroupBox: renderGroupBox
+    renderGroupBox: renderGroupBox,
+    renderPairBox: renderPairBox
   };
 })();

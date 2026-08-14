@@ -55,3 +55,7 @@ Python 使用项目虚拟环境: `.venv`。
 - 只替换 `data/power_tree.data.js` 即得新电源树
 - 示例数据埋的 6 个问题全部检出可定位
 - `tools/pack.py` 单文件与文件夹版功能一致
+
+
+## 5. 其他
+- 迭代中, 主动在docs\PowerTreeParseRules.md的规则中记录PowerTree规则

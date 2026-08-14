@@ -43,11 +43,15 @@
         collapsed[gid] = !collapsed[gid];
         PT.store.set({ collapsedGroups: collapsed });
       },
+      onEdgeClick: function (edgeId) {
+        // 选中边: 同 net 连线高亮, 其余淡化 (再点/点背景取消)
+        self.renderer.selectEdge(edgeId);
+      },
       onBackgroundClick: function () {
         PT.store.set({ selectedNodeId: null, focusNodeId: null });
         self.renderer.selectedNodeIds.clear();
         self.renderer._refreshSelection();
-        self.renderer.highlightPath(null);
+        self.renderer.highlightPath(null, true);
         self.refresh();
       }
     });
@@ -141,12 +145,12 @@
           return PT.rules.issuesForNode(PT.store.issues, nodeId);
         }
       };
-      self.renderer.render(graph, laid, ctx);
-      // 若某节点被选中, 触发高亮
+      // 若某节点被选中, 先设置高亮状态再渲染 (避免二次重绘)
       var sel = PT.store.get("selectedNodeId");
       if (sel) {
-        self.renderer.highlightPath(sel);
+        self.renderer.highlightPath(sel, true);
       }
+      self.renderer.render(graph, laid, ctx);
     });
   };
 

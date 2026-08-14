@@ -79,6 +79,7 @@
     ratio:         { t: "number" },          // divider 分压比
     ratio_str:     { t: "string" },          // divider 文本比例
     vin_fixed:     { t: "number" },          // source 固定输入 (用于 boost 等的上游)
+    vin_net:       { t: "string" },          // 显式输入网络名 (Vin 标签; 缺省按 netNaming.pattern 推导)
     side:          { t: "string" }           // 布局 hint: left/right
   };
 

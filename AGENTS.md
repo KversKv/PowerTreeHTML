@@ -200,3 +200,8 @@ PT.urlState.currentLink(PT.store.state)  // 当前视图链接
 - 使用: [docs/README.md](docs/README.md)
 - 合规: [docs/LEGAL.md](docs/LEGAL.md)
 - 变更: [docs/CHANGELOG.md](docs/CHANGELOG.md)
+
+
+
+## PowerTree规则
+见docs\PowerTreeParseRules.md

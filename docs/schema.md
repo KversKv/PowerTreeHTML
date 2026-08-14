@@ -48,6 +48,7 @@
 | sheet | string | — | — | 原理图页码 |
 | tags | array<string> | — | [] | 标签 |
 | note | string | — | "" | 备注 |
+| vin_net | string | — | — | 显式输入网络名 (Vin 标签; 缺省按 config `netNaming.pattern` 推导, 如 `VSYS_BUCK_03`) |
 | side | enum | — | — | 布局侧向 hint |
 
 ### type 枚举

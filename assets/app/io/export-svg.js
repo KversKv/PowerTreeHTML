@@ -21,6 +21,8 @@
       .pt-node-sub { font-family: system-ui, sans-serif; }
       text { font-family: system-ui, sans-serif; }
       .pt-edge { fill: none; }
+      .pt-edge-hop-mask { stroke: #ffffff; }
+      .pt-edge-hit { display: none; }
       .pt-watermark { font-family: system-ui, sans-serif; }
     `;
     clone.insertBefore(style, clone.firstChild);
