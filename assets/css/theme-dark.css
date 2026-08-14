@@ -1,0 +1,109 @@
+/* ============================================================
+ * theme-dark.css — 深色主题
+ * ============================================================ */
+
+body.pt-theme-dark {
+  background: #121212;
+  color: #e0e0e0;
+}
+
+body.pt-theme-dark .pt-toolbar {
+  background: #1e1e1e;
+  border-bottom-color: #333;
+  color: #e0e0e0;
+}
+
+body.pt-theme-dark .pt-logo { color: #64b5f6; }
+
+body.pt-theme-dark .pt-select,
+body.pt-theme-dark .pt-btn {
+  background: #2c2c2c;
+  border-color: #424242;
+  color: #e0e0e0;
+}
+body.pt-theme-dark .pt-btn:hover { background: #383838; }
+body.pt-theme-dark .pt-btn.active { background: #1565c0; color: #fff; }
+
+body.pt-theme-dark .pt-search-input {
+  background: #2c2c2c;
+  border-color: #424242;
+  color: #e0e0e0;
+}
+
+body.pt-theme-dark .pt-search-results,
+body.pt-theme-dark .pt-dropdown {
+  background: #2c2c2c;
+  border-color: #424242;
+}
+body.pt-theme-dark .pt-dropdown-item:hover { background: #1565c0; }
+body.pt-theme-dark .pt-search-item:hover { background: #1565c0; }
+
+body.pt-theme-dark .pt-sidebar {
+  background: #1e1e1e;
+  border-left-color: #333;
+  color: #e0e0e0;
+}
+
+body.pt-theme-dark .pt-detail-title { color: #e0e0e0; }
+body.pt-theme-dark .pt-detail-subtitle { color: #9e9e9e; }
+body.pt-theme-dark .pt-detail-label { color: #9e9e9e; }
+body.pt-theme-dark .pt-detail-value { color: #e0e0e0; }
+body.pt-theme-dark .pt-detail-section-title { color: #64b5f6; }
+body.pt-theme-dark .pt-detail-section { border-bottom-color: #333; }
+
+body.pt-theme-dark .pt-view-wrap { background: #121212; }
+
+body.pt-theme-dark .pt-minimap {
+  background: #1e1e1e;
+  border-color: #333;
+}
+
+body.pt-theme-dark .pt-issues-header {
+  background: #1e1e1e;
+  border-bottom-color: #333;
+}
+
+body.pt-theme-dark .pt-issue-item {
+  background: #2c2c2c;
+  color: #e0e0e0;
+}
+body.pt-theme-dark .pt-issue-item.pt-issue-E { background: #4a2020; }
+body.pt-theme-dark .pt-issue-item.pt-issue-W { background: #4a3a20; }
+body.pt-theme-dark .pt-issue-item.pt-issue-I { background: #1a3a52; }
+body.pt-theme-dark .pt-issue-msg { color: #e0e0e0; }
+body.pt-theme-dark .pt-issue-fix { color: #9e9e9e; }
+
+body.pt-theme-dark .pt-table th {
+  background: #2c2c2c;
+  border-bottom-color: #424242;
+  color: #e0e0e0;
+}
+body.pt-theme-dark .pt-table td { border-bottom-color: #333; color: #e0e0e0; }
+body.pt-theme-dark .pt-table tbody tr:hover { background: #2c2c2c; }
+body.pt-theme-dark .pt-table tbody tr.selected { background: #1a3a52; }
+body.pt-theme-dark .pt-table tbody tr.row-err { background: #4a2020; }
+body.pt-theme-dark .pt-table tbody tr.row-warn { background: #4a3a20; }
+
+body.pt-theme-dark .pt-dash-card {
+  background: #1e1e1e;
+  border-color: #333;
+  color: #e0e0e0;
+}
+body.pt-theme-dark .pt-dash-title { color: #e0e0e0; }
+
+body.pt-theme-dark .pt-footer {
+  background: #1e1e1e;
+  border-top-color: #333;
+}
+
+body.pt-theme-dark .pt-modes-table th { background: #2c2c2c; }
+body.pt-theme-dark .pt-modes-table tr.active td { background: #1a3a52; }
+
+body.pt-theme-dark .pt-path-breadcrumb { background: #2c2c2c; }
+
+body.pt-theme-dark .pt-json-view { background: #0d0d0d; }
+
+/* SVG 元素深色适配 */
+body.pt-theme-dark .pt-node-title { fill: #e0e0e0; }
+body.pt-theme-dark .pt-node-sub { fill: #9e9e9e; }
+body.pt-theme-dark text { fill: #e0e0e0; }

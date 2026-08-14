@@ -1,0 +1,27 @@
+/* ============================================================
+ * theme-light.css — 浅色主题 (默认)
+ * ============================================================ */
+
+body {
+  background: #fafafa;
+  color: #212121;
+}
+
+.pt-toolbar {
+  background: #ffffff;
+  border-bottom-color: #e0e0e0;
+}
+
+.pt-sidebar {
+  background: #ffffff;
+  border-left-color: #e0e0e0;
+}
+
+.pt-view-wrap {
+  background: #fafafa;
+}
+
+.pt-minimap {
+  background: #ffffff;
+  border-color: #e0e0e0;
+}

@@ -1,0 +1,11 @@
+# PowerTreeHTML — Python 工具链依赖
+# 用法: python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt
+#
+# 说明: 本项目的核心运行时是浏览器 + 原生 JS, 不依赖任何 Python 包。
+# 以下仅为 tools/*.py 的可选增强依赖。
+
+# 当前 tools/pack.py / csv2data.py / validate.py / _gen_eff.py 均仅用标准库,
+# 无需任何第三方包即可运行。
+
+# 若未来需要处理 Excel 模板 (.xlsx) 而非纯 CSV, 取消下一行注释:
+# openpyxl>=3.1.0

@@ -1,0 +1,77 @@
+/* ============================================================
+ * print.css — 打印样式
+ * A4/A3 横向, 黑白友好, 页眉项目/版本, 页脚保密声明
+ * ============================================================ */
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 15mm 10mm 20mm 10mm;
+
+    @top-center {
+      content: "PowerTree · " attr(data-project) " · " attr(data-version);
+      font-size: 9pt;
+      color: #666;
+    }
+
+    @bottom-center {
+      content: "机密文件 · 未经授权禁止外传 · 本工具计算结果仅供参考,不构成设计依据";
+      font-size: 8pt;
+      color: #c62828;
+    }
+  }
+
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  .pt-toolbar,
+  .pt-sidebar,
+  .pt-minimap,
+  .pt-footer,
+  .pt-search-results,
+  .pt-dropdown,
+  .pt-tour-overlay,
+  .pt-nda-overlay,
+  .pt-modal-overlay,
+  .pt-col-panel {
+    display: none !important;
+  }
+
+  .pt-main {
+    display: block;
+    width: 100%;
+  }
+
+  .pt-view-wrap {
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+
+  .pt-view-container {
+    page-break-inside: avoid;
+  }
+
+  .pt-svg {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* 黑白友好: 强制增加对比度 */
+  .pt-node-card {
+    stroke: #000 !important;
+    stroke-width: 1 !important;
+  }
+  .pt-edge {
+    stroke: #333 !important;
+  }
+  .pt-watermark {
+    fill: rgba(0,0,0,0.08) !important;
+  }
+}
+
+@page A3 {
+  size: A3 landscape;
+}

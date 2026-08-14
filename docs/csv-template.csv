@@ -1,0 +1,6 @@
+kind,id,type,name,group,part,refdes,sheet,domain,vin_min,vin_max,vout,vout_min,vout_max,vout_tol_pct,imax,iq_ua,efficiency,eff_ref,dropout_mv,rds_on_mohm,dcr_mohm,r_mohm,l_uh,isat,c_uf,esr_mohm,volt_rating,power_mw,tol_pct,vf_mv,soft_start_ms,theta_ja,sense,parallel_group,cascade_chain,cascade_stage,enable_src,enable_signal,enable_order,enable_delay_ms,enable_ramp_ms,enable_pg,on_in_modes,always_on,retention,iso_signal,reset_signal,current_active_typ,current_active_max,current_idle_typ,current_idle_max,current_suspend_typ,current_suspend_max,tags,note
+node,VBAT,source,单节锂电,,,,,,,,3.8,3.0,4.35,,8000,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+node,BUCK1,buck,DCDC1→VDD_CPU,pmic0,PMIC_U100_BUCK1,U100,SCH-P12,,2.7,5.5,0.9,0.6,1.1,3,6000,30,0.88,PMIC_U100_BUCK1,,,,,,,,,,,,,,remote,,CH_CPU,1,PMIC_SEQ,EN1,3,2,1,true,"active;idle;suspend",,,,,3200,4500,600,900,3,8,核心域,远端反馈
+node,LDO3,ldo,LDO3→VDD_PLL,pmic0,,U110,SCH-P13,,1.5,5.5,0.85,,,,300,15,,,150,,,,,,,,,,,,,,CH_CPU,2,SOC_GPIO7,PLL_EN,7,1,,,active,,,,,80,120,30,50,1,2,PLL,
+node,VDD_CPU,load,CPU 域,pd_cpu,,,,PD_CPU,,,0.9,,,,,,,,,,,,,,,,,,,,,,,,,,,,,ISO_CPU,RST_CPU,3200,4500,600,900,3,8,核心,
+edge,VBAT->BUCK1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
