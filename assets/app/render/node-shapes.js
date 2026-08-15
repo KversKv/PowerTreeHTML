@@ -170,6 +170,11 @@
     }
   };
 
+  /** 显示名: 去掉尾部括号注释 (如 "LDO_02 (对偶 BUCK_02)" → "LDO_02", "BUCK_04 (独立)" → "BUCK_04") */
+  function _dispName(node) {
+    return String(node.name || node.id).replace(/\s*[(（][^)）]*[)）]\s*$/, "");
+  }
+
   /** 符号型节点的关键参数文本 */
   function _symbolParamText(node) {
     switch (node.type) {
@@ -217,7 +222,7 @@
       "font-size": 10, "font-weight": 600, fill: "#212121",
       "class": "pt-node-title"
     }, g);
-    title.textContent = PT.util.ellipsize(node.name || node.id, 18);
+    title.textContent = PT.util.ellipsize(_dispName(node), 18);
 
     // 电路符号 (中部) — 引线拉到节点左右边缘, 中心严格在 h/2 (与连线对齐)
     var renderer = SYMBOL_RENDERERS[node.type];
@@ -324,7 +329,7 @@
       x: compact ? 24 : 30, y: compact ? 15 : 18, "class": "pt-node-title",
       "font-size": compact ? 11 : 12, "font-weight": 600, fill: "#212121"
     }, g);
-    title.textContent = PT.util.ellipsize(node.name || node.id, compact ? 14 : 22);
+    title.textContent = PT.util.ellipsize(_dispName(node), compact ? 14 : 22);
 
     if (!compact) {
       // id / refdes (第二行描述, 紧凑卡片不画)
@@ -339,15 +344,31 @@
     }
 
     // 电气参数
-    var line3 = _el("text", {
-      x: 6, y: compact ? 33 : 48, "font-size": compact ? 9 : 10, fill: "#424242"
-    }, g);
     var vout = PT.engine.nodeVout(node, ctx.modeId);
-    var params = [];
-    if (vout != null) params.push("V=" + PT.util.fmt(vout) + "V");
-    var iSum = node.__calc && node.__calc.i_out_sum_ma;
-    if (iSum != null && iSum > 0) params.push("I=" + PT.util.fmt(iSum) + "mA");
-    line3.textContent = params.join("  ");
+    if (compact) {
+      // 模块卡片: 左侧 MaxLoad=xxxmA (最大负载电流), 右侧近 OUT 端直接显示输出电压
+      if (node.imax != null) {
+        var lineL = _el("text", {
+          x: 6, y: 33, "font-size": 9, fill: "#424242"
+        }, g);
+        lineL.textContent = "MaxLoad=" + PT.util.fmt(node.imax) + "mA";
+      }
+      if (vout != null) {
+        var lineR = _el("text", {
+          x: w - 6, y: 33, "font-size": 9, fill: "#424242", "text-anchor": "end"
+        }, g);
+        lineR.textContent = PT.util.fmt(vout) + "V";
+      }
+    } else {
+      var line3 = _el("text", {
+        x: 6, y: 48, "font-size": 10, fill: "#424242"
+      }, g);
+      var params = [];
+      if (vout != null) params.push("V=" + PT.util.fmt(vout) + "V");
+      var iSum = node.__calc && node.__calc.i_out_sum_ma;
+      if (iSum != null && iSum > 0) params.push("I=" + PT.util.fmt(iSum) + "mA");
+      line3.textContent = params.join("  ");
+    }
 
     // 利用率条
     var util = node.__calc && node.__calc.utilization;

@@ -19,7 +19,9 @@
 
 ### 3. 节点 (nodes)
 - 尺寸由 `layoutOpts.nodeSize(type)` 决定, 模块卡片 (buck/ldo/load/domain) 用圆角矩形, 电路符号 (source/switch 等) 用标准电气符号
-- BUCK/LDO 系列 (buck/boost/buck_boost/ldo) 用**紧凑卡片** 120×58 (= 原 180×88 的 2/3), **只保留标题** (无第二行 id/refdes/part 描述), 参数行 (V=/I=) 与利用率条保留
+- BUCK/LDO 系列 (buck/boost/buck_boost/ldo) 用**紧凑卡片** 120×58 (= 原 180×88 的 2/3), **只保留标题** (无第二行 id/refdes/part 描述), 参数行与利用率条保留
+- 紧凑卡片参数行: **左侧 `MaxLoad=xxxmA`** (最大负载电流 `imax`), **右侧近 OUT 端直接显示输出电压** (如 `1.2V`, 右对齐); 不再左侧显示 `V=`/`I=`
+- 节点标题显示名统一**去掉尾部括号注释** (如 `LDO_02 (对偶 BUCK_02)` → `LDO_02`, `BUCK_04 (独立)` → `BUCK_04`, `LDO_VMIC1 (麦克风 A)` → `LDO_VMIC1`); 仅渲染层裁剪 (`node-shapes._dispName`), 数据 `name` 原样保留
 - 节点可选 `vin_net` 字段显式声明输入网络名 (Vin 标签用, 见 §四.2)
 - `side` 优先于分组 `side`, 决定 ELK 分区 (left=0 / right=2 / 其他=1)
 
@@ -32,6 +34,7 @@
   - pair 容器按"首个成员所属 group"归位
   - **对偶不建功率边** (短接是输出对输出, 非功率流), 关系写在节点 `note`
   - 对偶轨下挂统一挂 **LDO 侧** (芯片默认 LDO `pu=1` / BUCK `pu=0`)
+  - **同列对偶整体出线**: 成员的 power 出边源端在布局时统一视为 **pair 容器右缘中心** (单点引出, 不分散端口); 整体下游 ≥3 时由总线机制自动汇成**一条纵向母线**, 各下游分支分岔 (如 PAIR_03: SW3/SW4 与 LDO_07~11 从同一母线分岔, 而非各自从 LDO_03 单独出线); 跨列对偶的单成员簇不适用
 - **跨列对偶** (成员 power 深度不同, 如 BUCK_06 一级 / LDO_06 二级):
   - 不整体聚合 —— 按 power 深度拆成独立列簇 (`{pid}#0/#1`), 成员各归其列
   - 簇外框**不显示标题** (只留浅框, `noTitle`), 避免"跨列对偶"字样悬空
@@ -118,7 +121,8 @@
 - 分组框: 圆角虚线框 + 标题; pair 外框: 浅紫圆角框 + 标签
 
 ### 2. 边绘制
-- `power` 实线, 宽度按电流; `control` 虚线, 按 `sub` 配色
+- `power` 实线, 宽度按电流, **颜色按电压域分 5 档** (`edgeRouter.VOLT_BANDS` / `powerEdgeColor`): ≤1.0V 蓝 `#1565c0`; ≤1.3V 青 `#00838f`; ≤3.0V (含 1.6~2V) 绿 `#2e7d32`; ≤3.5V 橙 `#ef6c00`; >3.5V 红 `#c62828`; 取边源端输出电压 (源无 `vout` 如 load_switch 时沿 power 入边上溯), 取不到退回灰蓝 `#546e7a`; T 型结点/跨越弧/总线干线同色
+- `control` 虚线, 按 `sub` 配色
 - 总线干线 / 共享干线在 `renderEdge` 里用 `__bus.first` / `__trunk` 单独画
 - inline 无源元件在边中点画圆标记
 - **Vin 标签** (`pt-edge-vin-label`): power 边目标为模块类型 (config `netNaming.moduleTypes`) 时, 标签锚在**目标端输入引脚上方** (右对齐), 显示**模块输入网络名** = `node.vin_net` 优先, 否则按 `netNaming.pattern` 推导 (缺省 `{net}_{node}`; 例: VSYS→BUCK_03 显示 `VSYS_BUCK_03`)。**电气连接仍走 `edge.net`, 只改显示**

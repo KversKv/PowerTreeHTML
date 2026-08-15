@@ -446,6 +446,7 @@
       var hit = PT.edgeRouter.renderEdge(self.edgeLayer, edge, elkEdge.sections, {
         showLabel: true,
         currentMa: edge.__calc && edge.__calc.i_ma,
+        modeId: self.ctx.modeId,
         faded: st.faded,
         highlight: st.highlight
       });
@@ -467,6 +468,7 @@
       var st = edgeState(edge);
       PT.edgeRouter.renderEdgeDecor(self.edgeLayer, edge, elkEdge.sections, {
         currentMa: edge.__calc && edge.__calc.i_ma,
+        modeId: self.ctx.modeId,
         faded: st.faded,
         highlight: st.highlight
       });

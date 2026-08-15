@@ -25,6 +25,51 @@
     IRQ:   "#d81b60"
   };
 
+  /** 电压域分色 (power 边按源端输出电压分档):
+   *  0.5~1V → 蓝; 1~1.3V → 青; 1.3~3V (含 1.6~2V) → 绿; 3~3.5V → 橙; 3.5V 以上 → 红
+   *  (档位间隙归入邻近档: <0.5 归蓝, 1.3~1.6/2~3 归绿) */
+  var VOLT_BANDS = [
+    { max: 1.0,      color: "#1565c0" },
+    { max: 1.3,      color: "#00838f" },
+    { max: 3.0,      color: "#2e7d32" },
+    { max: 3.5,      color: "#ef6c00" },
+    { max: Infinity, color: "#c62828" }
+  ];
+  var DEFAULT_POWER_COLOR = "#546e7a";
+
+  function voltageBandColor(v) {
+    for (var i = 0; i < VOLT_BANDS.length; i++) {
+      if (v <= VOLT_BANDS[i].max) return VOLT_BANDS[i].color;
+    }
+    return DEFAULT_POWER_COLOR;
+  }
+
+  /** power 边电压: 取源节点输出电压; 源无 vout (如 load_switch) 时沿 power 入边上溯 */
+  function edgeVoltage(edge, modeId) {
+    var graph = PT.store && PT.store.graph;
+    if (!graph || !edge) return null;
+    var seen = {};
+    var stack = [edge.from];
+    while (stack.length) {
+      var nid = stack.pop();
+      if (seen[nid]) continue;
+      seen[nid] = true;
+      var n = graph.node(nid);
+      if (!n) continue;
+      var v = PT.engine.nodeVout(n, modeId);
+      if (v != null) return v;
+      var ups = graph.upstreamPowerIds(nid);
+      for (var i = 0; i < ups.length; i++) stack.push(ups[i]);
+    }
+    return null;
+  }
+
+  /** power 边颜色 (按电压域分色); 取不到电压时退回默认灰蓝 */
+  function powerEdgeColor(edge, modeId) {
+    var v = edgeVoltage(edge, modeId);
+    return v == null ? DEFAULT_POWER_COLOR : voltageBandColor(v);
+  }
+
   /** 电流 → 线宽 */
   function widthForCurrent(iMa) {
     if (iMa == null || iMa <= 0) return 1.2;
@@ -194,7 +239,7 @@
     if (!d) return null;
 
     var isControl = edge.type === "control";
-    var subColor = isControl ? (SUB_COLORS[edge.sub] || "#607d8b") : "#546e7a";
+    var subColor = isControl ? (SUB_COLORS[edge.sub] || "#607d8b") : powerEdgeColor(edge, ctx.modeId);
     var currentMa = ctx.currentMa != null ? ctx.currentMa : ((edge.__calc && edge.__calc.i_ma) || 0);
     var strokeW = isControl ? 1.2 : widthForCurrent(currentMa);
     var edgeColor = ctx.highlight ? "#ff5722" : subColor;
@@ -360,7 +405,7 @@
     if (edge.type === "control") return;   // 控制虚线不画结点/跳线
     var currentMa = ctx.currentMa != null ? ctx.currentMa : ((edge.__calc && edge.__calc.i_ma) || 0);
     var strokeW = widthForCurrent(currentMa);
-    var color = ctx.highlight ? "#ff5722" : "#546e7a";
+    var color = ctx.highlight ? "#ff5722" : powerEdgeColor(edge, ctx.modeId);
     var op = ctx.faded ? 0.15 : null;
 
     // T 型结点 (相连)
@@ -433,6 +478,9 @@
 
   PT.edgeRouter = {
     SUB_COLORS: SUB_COLORS,
+    VOLT_BANDS: VOLT_BANDS,
+    voltageBandColor: voltageBandColor,
+    powerEdgeColor: powerEdgeColor,
     widthForCurrent: widthForCurrent,
     sectionsToPath: sectionsToPath,
     renderEdge: renderEdge,

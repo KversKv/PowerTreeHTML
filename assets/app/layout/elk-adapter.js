@@ -373,6 +373,27 @@
       return null;
     }
 
+    // 对偶整体出线: 同列对偶组 (成员 ≥2) 的 power 出边, 源端统一视为 pair 容器右缘中心 ——
+    // Vout 从整体右侧中心单点引出; 同源下游 ≥3 时由总线机制自动汇成一条纵向母线
+    // (如 PAIR_03: SW3/SW4 与 LDO_07~11 从同一条母线分岔)。
+    // 跨列对偶拆成的单成员簇不适用 (保持成员各自出线)。
+    var pairOf = {};   // 成员节点 id -> pair 容器
+    Object.keys(nodeById).forEach(function (id) {
+      var c = nodeById[id];
+      if (!c.__isPair || (c.children || []).length < 2) return;
+      c.children.forEach(function (m) { pairOf[m.id] = c; });
+    });
+    /** 有效源 rect: 对偶成员 → pair 容器 */
+    function effSrcRect(id) {
+      var p = pairOf[id];
+      return p ? abs[p.id] : resolveAbs(id);
+    }
+    /** 有效源 id (总线聚类 key): 对偶成员 → pair 容器 id */
+    function effSrcId(id) {
+      var p = pairOf[id];
+      return p ? p.id : id;
+    }
+
     /* ================= 正交走线 (列间通道化) =================
      * 节点按 x 归并为若干"列", 列间间隙是唯一的竖直走线区:
      * - 相邻列边 H-V-H; 跨列边 H-V-H-V-H (在中间列模块间的"水平空隙带"穿过, 不穿模块)
@@ -468,12 +489,12 @@
     //    分支上的 Vin 标签仍按各自 net (VSYS / vdd_l14_15 / vdd_l5) 区分。
     var bySrc = {};
     edges.forEach(function (e) {
-      var s = resolveAbs(e.sources && e.sources[0]);
+      var s = effSrcRect(e.sources && e.sources[0]);   // 对偶成员 → pair 整体
       var t = resolveAbs(e.targets && e.targets[0]);
       if (!s || !t) return;
       var isControl = e.__edge && e.__edge.type === "control";
       var forward = t.x > s.x + s.w;   // 目标在源右侧
-      var key = e.sources[0];
+      var key = effSrcId(e.sources[0]);
       (bySrc[key] = bySrc[key] || []).push({ e: e, s: s, t: t, forward: forward, isControl: isControl });
     });
 
@@ -510,7 +531,8 @@
         var t = resolveAbs(e.targets && e.targets[0]);
         if (!s || !t) return;
         (inBy[e.targets[0]] = inBy[e.targets[0]] || []).push({ e: e, other: s.y + s.h / 2 });
-        if (!busEdgeIds[e.id]) {
+        // 对偶成员出边不分散端口: 统一从 pair 右缘中心单点出线
+        if (!busEdgeIds[e.id] && !pairOf[e.sources[0]]) {
           (outBy[e.sources[0]] = outBy[e.sources[0]] || []).push({ e: e, other: t.y + t.h / 2 });
         }
       });
@@ -617,7 +639,7 @@
     // 6) 普通边路由: 相邻列 H-V-H; 跨列 power 走空隙带; 后向/同列/控制边简单绕行
     edges.forEach(function (e) {
       if (busEdgeIds[e.id]) return;
-      var s = resolveAbs(e.sources && e.sources[0]);
+      var s = effSrcRect(e.sources && e.sources[0]);   // 对偶成员 → pair 整体
       var t = resolveAbs(e.targets && e.targets[0]);
       if (!s || !t) return;
       var isCtl = e.__edge && e.__edge.type === "control";
