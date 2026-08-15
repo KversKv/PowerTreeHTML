@@ -136,9 +136,9 @@
 
     /** 布局 pair 容器: 成员垂直堆叠 (BUCK 上 LDO 下), 尺寸由成员撑起 */
     function layoutPair(container) {
-      // 跨列对偶簇不显示标题, 上留白收窄
-      var PAD = container.__noTitle ? { t: 8, l: 6, r: 6, b: 6 } : { t: 26, l: 6, r: 6, b: 6 };
-      var GAP = container.__noTitle ? 4 : 8;
+      // 对偶组一律不显示标题, 上留白收窄
+      var PAD = { t: 8, l: 6, r: 6, b: 6 };
+      var GAP = 4;
       var w = 0;
       (container.children || []).forEach(function (m) { if ((m.width || 0) > w) w = m.width; });
       var y = PAD.t;
@@ -256,6 +256,23 @@
         var nch = Object.keys(chNets).length;
         gapOf[b] = nch <= 1 ? BASE_GAP : nch * LANE_GAP + GAP_MARGIN;
       }
+      // 第一级 (layer0 源 → layer1 模块) 的入线要带 Vin 标签 (如 VSYS_BUCK_01 · 2100mA, 约 100px),
+      // 标签放在"干线 → 目标引脚"的末段水平线上方, 该段长 = 目标左缘-CLR - 干线x。
+      // 故第一层间隙必须 ≥ 第一级入边数*LANE_GAP (L 侧干线占位) + VIN_LABEL_W (末段留宽)。
+      var VIN_LABEL_W = 104;
+      var firstInNets = {};
+      edges.forEach(function (e) {
+        var ge = e.__edge;
+        if (!ge || ge.type === "control") return;
+        if ((depths[ge.from] || 0) !== 0) return;   // 源 depth=0 = 第一级
+        var t = liftTo(e.targets && e.targets[0], childSet);
+        if (t && layer[t] === 1) firstInNets[ge.net || e.id] = 1;
+      });
+      var nFirst = Object.keys(firstInNets).length;
+      if (maxLayer >= 1 && nFirst > 0) {
+        var need = nFirst * LANE_GAP + VIN_LABEL_W + CLR * 2;
+        if (gapOf[0] == null || gapOf[0] < need) gapOf[0] = need;
+      }
 
       // 逐层放置: 每层一列, x 按前层最大宽度 + 动态层间距累加, y 同层垂直堆叠
       var xCursor = pad.l;
@@ -288,14 +305,16 @@
         }
 
         var wMax = 0;
+        list.forEach(function (c) { if ((c.width || 0) > wMax) wMax = c.width; });
         var y = pad.t;
         var centers = {};
         list.forEach(function (c) {
-          c.x = xCursor;
+          // 同层节点按"中心对齐"放置 (而非左对齐): 混合宽度时边缘不齐更整齐,
+          // 第一级 buck/ldo/load_switch 宽度不同, 中心对齐后入线端口 x 一致
+          c.x = xCursor + (wMax - (c.width || 0)) / 2;
           c.y = y;
           centers[c.id] = y + (c.height || 0) / 2;
           y += (c.height || 0) + NODE_GAP;
-          if ((c.width || 0) > wMax) wMax = c.width;
         });
         prevCenters = centers;
         xCursor += wMax + (gapOf[l] != null ? gapOf[l] : BASE_GAP);
@@ -463,7 +482,8 @@
         members.forEach(function (m) { busEdgeIds[m.e.id] = 1; });
         var ys = members.map(function (m) { return m.t.y + m.t.h / 2; });
         ys.push(rec.sy);
-        rec.trunkSeg = addSeg(sr, nk, Math.min.apply(null, ys), Math.max.apply(null, ys), "bus", rec);
+        // 总线干线贴源列 (L): 各目标分支水平段拉长到目标, Vin 标签放在分支线上方不溢出
+        rec.trunkSeg = addSeg(sr, nk, Math.min.apply(null, ys), Math.max.apply(null, ys), "bus", rec, "L");
         recs.push(rec);
       });
     });
@@ -592,7 +612,9 @@
         var sr = runOf(s), tr = runOf(t);
         if (sr >= 0 && tr === sr + 1) {
           rec.kind = "n";
-          rec.seg = addSeg(sr, rec.net, rec.sy, rec.ty, "n", rec);
+          // 第一级入边 (源 depth=0): 干线贴源列 (L), 末段水平留宽放 Vin 标签
+          var isFirst = (depths[e.__edge && e.__edge.from] || 0) === 0;
+          rec.seg = addSeg(sr, rec.net, rec.sy, rec.ty, "n", rec, isFirst ? "L" : "R");
         } else if (sr >= 0 && tr > sr + 1) {
           // 前向跨列: H-V-H-V-H 走中间列水平空隙带
           rec.kind = "x";

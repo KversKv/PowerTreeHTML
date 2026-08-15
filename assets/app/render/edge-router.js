@@ -218,17 +218,18 @@
       var sec2 = sections[0];
       var vinName = isControl ? null : vinNetName(edge);
       if (vinName && !edge.__vinHidden && sec2.endPoint) {
-        // Vin 标签: 锚在目标模块输入引脚处 (目标端上方, 右对齐)
-        // 显示模块输入网络名, 而不是前级的输出网络名
-        var ep = sec2.endPoint;
-        var vparts = [vinName];
-        if (currentMa > 0) vparts.push(PT.util.fmt(currentMa) + "mA");
+        // Vin 标签: 显示模块输入网络名, 放在"进目标模块的末段水平线"中点正上方,
+        // 沿线居中 —— 第一级入边的末段已留宽 (干线贴源列), 标签完整落在线上方。
+        var pts = [sec2.startPoint].concat(sec2.bendPoints || [], [sec2.endPoint]);
+        var hp = pts[pts.length - 2], ep = pts[pts.length - 1];
+        var midX = (hp.y === ep.y) ? (hp.x + ep.x) / 2 : (ep.x - 24);
+        // 只显示 Vin 网络名 (不带电流, 避免杂乱; 电流 hover tooltip / 点击高亮可查)
         var vlabel = _el("text", {
-          x: ep.x - 6, y: ep.y - 5, "font-size": 9,
+          x: midX, y: ep.y - 5, "font-size": 9,
           fill: ctx.highlight ? "#e64a19" : "#37474f",
-          "text-anchor": "end", "class": "pt-edge-vin-label", "data-edge-id": edge.id
+          "text-anchor": "middle", "class": "pt-edge-vin-label", "data-edge-id": edge.id
         }, g);
-        vlabel.textContent = vparts.join(" · ");
+        vlabel.textContent = vinName;
       }
     }
 

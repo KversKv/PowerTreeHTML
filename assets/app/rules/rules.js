@@ -38,17 +38,24 @@
     return issues;
   }
 
-  /** 统计 E/W/I 数量 */
+  /** 问题检测是否开启 (工具栏滑动开关控制, 默认关闭) */
+  function _enabled() {
+    return !!(PT.store && PT.store.get && PT.store.get("issueCheckEnabled"));
+  }
+
+  /** 统计 E/W/I 数量 (检测关闭时全部 0, 不显示角标) */
   function countByLevel(issues) {
     var c = { E: 0, W: 0, I: 0 };
+    if (!_enabled()) return c;
     (issues || []).forEach(function (i) {
       if (c[i.level] != null) c[i.level]++;
     });
     return c;
   }
 
-  /** 取某节点相关问题 */
+  /** 取某节点相关问题 (检测关闭时返回空, 节点不显示问题角标/高亮) */
   function issuesForNode(issues, nodeId) {
+    if (!_enabled()) return [];
     return (issues || []).filter(function (i) { return i.nodeId === nodeId; });
   }
 

@@ -105,6 +105,17 @@
     right.appendChild(ctlBtn);
     this.ctlBtn = ctlBtn;
 
+    // 问题检测 (Error/Warning 规则总开关, 默认关闭)
+    var issBtn = document.createElement("button");
+    issBtn.className = "pt-btn pt-toggle";
+    issBtn.textContent = "问题检测";
+    issBtn.title = "开启后按规则检查 Error/Warning 并在节点上标注";
+    issBtn.onclick = function () {
+      PT.store.set({ issueCheckEnabled: !PT.store.get("issueCheckEnabled") });
+    };
+    right.appendChild(issBtn);
+    this.issBtn = issBtn;
+
     // Fit
     var fitBtn = document.createElement("button");
     fitBtn.className = "pt-btn";
@@ -339,6 +350,8 @@
     document.body.classList.toggle("pt-theme-dark", state.theme === "dark");
     if (state.controlEdgeVisible) this.ctlBtn.classList.add("active");
     else this.ctlBtn.classList.remove("active");
+    if (state.issueCheckEnabled) this.issBtn.classList.add("active");
+    else this.issBtn.classList.remove("active");
     this.langBtn.textContent = state.lang === "zh" ? "EN" : "中";
 
     this.refreshIssueCount();

@@ -451,7 +451,7 @@
 
   /** 对偶组外框渲染 (浅色整体框, 在 pair 容器坐标下; 跨列对偶簇不显示标题) */
   function renderPairBox(g, elkPair, ctx) {
-    var label = (elkPair.labels && elkPair.labels[0] && elkPair.labels[0].text) || "";
+    // 对偶组一律不显示标题 (同列/跨列都只留浅框), 避免与成员模块名重复造成杂乱
     _el("rect", {
       x: 0, y: 0,
       width: elkPair.width, height: elkPair.height,
@@ -459,12 +459,6 @@
       stroke: "#9575cd", "stroke-width": 1.2,
       "class": "pt-pair-box"
     }, g);
-    if (elkPair.__noTitle || !label) return;   // 跨列对偶: 只留浅框
-    var title = _el("text", {
-      x: 10, y: 16, "font-size": 11, "font-weight": 600,
-      fill: "#5e35b1", "class": "pt-pair-title"
-    }, g);
-    title.textContent = label;
   }
 
   PT.nodeShapes = {

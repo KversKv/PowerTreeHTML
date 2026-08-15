@@ -17,6 +17,7 @@
     focusNodeId: null,       // 聚焦模式中心
     focusHops: 2,
     controlEdgeVisible: false,
+    issueCheckEnabled: false,   // Error/Warning 规则检测总开关 (默认关闭, 图面太乱时先关掉)
     controlSubFilter: { EN: true, PG: true, I2C: true, RESET: true, ISO: true, SENSE: true, IRQ: true },
     colorBy: "util",         // util | voltage | domain | type | issue | pmic
     lang: "zh",              // zh | en

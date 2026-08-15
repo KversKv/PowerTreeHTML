@@ -104,7 +104,7 @@
   function bindStateWatch() {
     var renderKeys = ["view", "mode", "stat", "colorBy", "controlEdgeVisible",
       "collapsedGroups", "focusNodeId", "focusHops", "filter",
-      "showSwimlane", "showInlinePassive", "lang"];
+      "showSwimlane", "showInlinePassive", "lang", "issueCheckEnabled"];
     PT.on("state:changed", function (ev) {
       var needRender = ev.keys.some(function (k) {
         return renderKeys.indexOf(k) >= 0 || k === "*";

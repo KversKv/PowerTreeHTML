@@ -10,6 +10,7 @@
     this.container = container;
     this._build();
     PT.on("rules:done", this.refresh.bind(this));
+    PT.on("state:changed", this.refresh.bind(this));   // issueCheckEnabled 开关切换时刷新
   }
 
   IssuesPanel.prototype._build = function () {
@@ -23,6 +24,7 @@
   };
 
   IssuesPanel.prototype.refresh = function () {
+    var enabled = !!PT.store.get("issueCheckEnabled");
     var issues = PT.store.issues || [];
     var counts = PT.rules.countByLevel(issues);
     var lang = PT.store.get("lang") || "zh";
@@ -33,6 +35,10 @@
       "<span class='pt-issue-badge pt-issue-I'>I " + counts.I + "</span>";
 
     this.list.innerHTML = "";
+    if (!enabled) {
+      this.list.innerHTML = "<div class='pt-empty'>问题检测已关闭 (工具栏开启)</div>";
+      return;
+    }
     if (!issues.length) {
       this.list.innerHTML = "<div class='pt-empty'>无问题</div>";
       return;

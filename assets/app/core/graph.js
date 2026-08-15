@@ -36,8 +36,11 @@
     });
 
     // 边
-    this.edges = (this.data.edges || []).map(function (e) {
+    this.edges = (this.data.edges || []).map(function (e, idx) {
       var edge = PT.util.deepClone(e);
+      // 数据未提供边 id 时补稳定合成 id (布局的 busEdgeIds/ports、渲染的 edgeState 等均以边 id 为键,
+      // 缺 id 会导致键塌缩成 undefined 而互相污染)
+      if (!edge.id) edge.id = "__e" + idx;
       edge.__fromNode = self.nodes[e.from] || null;
       edge.__toNode = self.nodes[e.to] || null;
       if (edge.__fromNode) edge.__fromNode.__out.push(edge);

@@ -1,6 +1,7 @@
 /* power_tree_pmu1811.data.js — BES1811 PMIC 真实连接关系
  * 严格按 pmu_1811_power_map.md §3/§4/§5/§6 建模
- * 31 行 _LAYOUT_ROWS: 6 BUCK + 15 LDO + 2 VMIC + 7 SW + 2 子母线 + VSYS + loads
+ * 31 行 _LAYOUT_ROWS: 6 BUCK + 15 LDO + 2 VMIC + 7 SW + VSYS + loads
+ * (子母线 vdd_l14_15/vdd_l5 不建虚拟节点, 直接作下游 LDO 的 Vin 网络名)
  */
 PT.registerData("power_tree", {
   "meta": {
@@ -44,12 +45,6 @@ PT.registerData("power_tree", {
     { "id": "VSYS", "type": "source", "name": "VSYS 系统电源",
       "vout": 3.8, "vout_range": [3.0, 4.35], "imax": 5000,
       "side": "left", "tags": ["主输入"] },
-
-    /* ===== 子母线 (virtual) ===== */
-    { "id": "vdd_l14_15", "type": "virtual", "name": "vdd_l14_15 子母线",
-      "group": "pmic1811", "side": "left" },
-    { "id": "vdd_l5", "type": "virtual", "name": "vdd_l5 子母线",
-      "group": "pmic1811", "side": "left" },
 
     /* ===== BUCK (6 个, §9) ===== */
     /* 对偶组 1: BUCK_01 ↔ LDO_01 */
@@ -209,6 +204,7 @@ PT.registerData("power_tree", {
       "dropout_mv": 200, "imax": 200, "iq_ua": 10,
       "enable": { "src": "PMU_SEQ", "signal": "EN_LDO14", "order": 18, "delay_ms": 0.5 },
       "on_in_modes": ["active", "lp"],
+      "vin_net": "vdd_l14_15",
       "tags": ["L2", "vdd_l14_15"] },
 
     { "id": "LDO_15", "type": "ldo", "name": "LDO_15",
@@ -217,6 +213,7 @@ PT.registerData("power_tree", {
       "dropout_mv": 200, "imax": 200, "iq_ua": 10,
       "enable": { "src": "PMU_SEQ", "signal": "EN_LDO15", "order": 19, "delay_ms": 0.5 },
       "on_in_modes": ["active", "lp"],
+      "vin_net": "vdd_l14_15",
       "tags": ["L2", "vdd_l14_15"] },
 
     /* ===== VMIC (麦克风偏置 LDO, §11) ===== */
@@ -226,6 +223,7 @@ PT.registerData("power_tree", {
       "dropout_mv": 250, "imax": 5, "iq_ua": 3,
       "enable": { "src": "PMU_SEQ", "signal": "EN_VMIC1", "order": 20, "delay_ms": 0.2 },
       "on_in_modes": ["active"],
+      "vin_net": "vdd_l14_15",
       "tags": ["VMIC", "vdd_l14_15"] },
 
     { "id": "LDO_VMIC2", "type": "ldo", "name": "LDO_VMIC2 (麦克风 B)",
@@ -234,6 +232,7 @@ PT.registerData("power_tree", {
       "dropout_mv": 250, "imax": 5, "iq_ua": 3,
       "enable": { "src": "PMU_SEQ", "signal": "EN_VMIC2", "order": 21, "delay_ms": 0.2 },
       "on_in_modes": ["active"],
+      "vin_net": "vdd_l14_15",
       "tags": ["VMIC", "vdd_l14_15"] },
 
     /* ===== 子母线 vdd_l5 下挂 ===== */
@@ -243,6 +242,7 @@ PT.registerData("power_tree", {
       "dropout_mv": 150, "imax": 300, "iq_ua": 10,
       "enable": { "src": "PMU_SEQ", "signal": "EN_LDO05", "order": 22, "delay_ms": 0.5 },
       "on_in_modes": ["active", "lp"],
+      "vin_net": "vdd_l5",
       "tags": ["L2", "vdd_l5"] },
 
     /* ===== LDO_13 (单模块源, VSYS 直供) ===== */
@@ -388,16 +388,14 @@ PT.registerData("power_tree", {
     { "from": "VSYS", "to": "BUCK_04", "type": "power", "net": "VSYS", "trace_r_mohm": 3 },
     { "from": "VSYS", "to": "BUCK_05", "type": "power", "net": "VSYS", "trace_r_mohm": 3 },
     { "from": "VSYS", "to": "BUCK_06", "type": "power", "net": "VSYS", "trace_r_mohm": 3 },
-    { "from": "VSYS", "to": "vdd_l14_15", "type": "power", "net": "VSYS", "trace_r_mohm": 1 },
-    { "from": "VSYS", "to": "vdd_l5",     "type": "power", "net": "VSYS", "trace_r_mohm": 1 },
     { "from": "VSYS", "to": "LDO_13",  "type": "power", "net": "VSYS", "trace_r_mohm": 3 },
 
-    /* ===== 子母线下挂 (§4.1) ===== */
-    { "from": "vdd_l14_15", "to": "LDO_14",    "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
-    { "from": "vdd_l14_15", "to": "LDO_15",    "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
-    { "from": "vdd_l14_15", "to": "LDO_VMIC1", "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
-    { "from": "vdd_l14_15", "to": "LDO_VMIC2", "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
-    { "from": "vdd_l5",     "to": "LDO_05",    "type": "power", "net": "vdd_l5",     "trace_r_mohm": 1 },
+    /* ===== 子母线网络 (§4.1): 不建虚拟节点, 直接作下游 LDO 的 Vin 网络名 ===== */
+    { "from": "VSYS", "to": "LDO_14",    "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
+    { "from": "VSYS", "to": "LDO_15",    "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
+    { "from": "VSYS", "to": "LDO_VMIC1", "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
+    { "from": "VSYS", "to": "LDO_VMIC2", "type": "power", "net": "vdd_l14_15", "trace_r_mohm": 1 },
+    { "from": "VSYS", "to": "LDO_05",    "type": "power", "net": "vdd_l5",     "trace_r_mohm": 1 },
 
     /* ===== 对偶短接轨 (§4.2) =====
      * 对偶 = BUCK/LDO 输出对输出短接, 非功率流边, 不建边 (避免多父/环路);
