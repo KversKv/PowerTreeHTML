@@ -234,6 +234,10 @@ html, body {
 /* 跨越弧遮蔽: 用画布底色盖住被跨越的线 (深色主题在 theme-dark.css 覆盖; 导出走 export-svg 内嵌) */
 .pt-edge-hop-mask { stroke: #fafafa; }
 
+/* 跨列对偶"输出合并短接线": 虚线 + 合并结点 (输出合并后一起输出) */
+.pt-pair-link { stroke-dasharray: 6,3; opacity: 0.9; }
+.pt-pair-link-dot { stroke: #fff; stroke-width: 1; }
+
 .pt-minimap {
   position: absolute;
   right: 12px; bottom: 12px;

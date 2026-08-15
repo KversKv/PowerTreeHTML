@@ -472,6 +472,27 @@
       });
     });
 
+    // 跨列对偶"输出合并短接线" (不建功率边, 仅视觉连接; 边选中高亮时淡化)
+    if (layoutData.__pairLinks && layoutData.__pairLinks.length) {
+      var posMap = {};
+      flatNodes.forEach(function (n) { posMap[n.id] = n; });
+      layoutData.__pairLinks.forEach(function (link) {
+        if (self.highlightEdgeIds) {
+          // 高亮模式下对偶合并线淡出, 不干扰追踪
+          var lg = document.createElementNS(SVG_NS, "g");
+          lg.setAttribute("opacity", 0.15);
+          self.edgeLayer.appendChild(lg);
+          PT.edgeRouter.renderPairLink(lg, link, {
+            posOf: function (nid) { return posMap[nid]; }
+          });
+        } else {
+          PT.edgeRouter.renderPairLink(self.edgeLayer, link, {
+            posOf: function (nid) { return posMap[nid]; }
+          });
+        }
+      });
+    }
+
     // 泳道
     if (this.ctx.showSwimlane) {
       var laneNodes = flatNodes.map(function (n) {

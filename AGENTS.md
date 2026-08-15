@@ -204,4 +204,4 @@ PT.urlState.currentLink(PT.store.state)  // 当前视图链接
 
 
 ## PowerTree规则
-见docs\PowerTreeParseRules.md
+- 迭代规则时, 需要主动维护[docs\PowerTreeParseRules.md](docs\PowerTreeParseRules.md)

@@ -449,7 +449,7 @@
     title.textContent = label;
   }
 
-  /** 对偶组外框渲染 (浅色整体框, 在 pair 容器坐标下) */
+  /** 对偶组外框渲染 (浅色整体框, 在 pair 容器坐标下; 跨列对偶簇不显示标题) */
   function renderPairBox(g, elkPair, ctx) {
     var label = (elkPair.labels && elkPair.labels[0] && elkPair.labels[0].text) || "";
     _el("rect", {
@@ -459,6 +459,7 @@
       stroke: "#9575cd", "stroke-width": 1.2,
       "class": "pt-pair-box"
     }, g);
+    if (elkPair.__noTitle || !label) return;   // 跨列对偶: 只留浅框
     var title = _el("text", {
       x: 10, y: 16, "font-size": 11, "font-weight": 600,
       fill: "#5e35b1", "class": "pt-pair-title"

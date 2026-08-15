@@ -212,14 +212,14 @@
       }
     }
 
-    // 标签 (net / 电流 / Vin 输入网络名)
+    // 标签: 只保留模块 Vin 输入网络名 (如 VSYS_BUCK_03) + 电流;
+    // 连线上的 net/信号名称一律不画 (避免杂乱) —— 网络名可 hover 查看 tooltip 或点击追踪高亮。
     if (ctx.showLabel && sections && sections.length) {
       var sec2 = sections[0];
       var vinName = isControl ? null : vinNetName(edge);
-
-      if (vinName && sec2.endPoint) {
+      if (vinName && !edge.__vinHidden && sec2.endPoint) {
         // Vin 标签: 锚在目标模块输入引脚处 (目标端上方, 右对齐)
-        // 显示模块输入网络名 (如 VSYS_BUCK_03), 而不是前级输出网络名
+        // 显示模块输入网络名, 而不是前级的输出网络名
         var ep = sec2.endPoint;
         var vparts = [vinName];
         if (currentMa > 0) vparts.push(PT.util.fmt(currentMa) + "mA");
@@ -229,46 +229,52 @@
           "text-anchor": "end", "class": "pt-edge-vin-label", "data-edge-id": edge.id
         }, g);
         vlabel.textContent = vparts.join(" · ");
-      } else if (sec2.startPoint && sec2.endPoint) {
-        // 常规中点标签 (非模块目标 / 控制边)
-        var mx = (sec2.startPoint.x + sec2.endPoint.x) / 2;
-        var my = (sec2.startPoint.y + sec2.endPoint.y) / 2;
-        var label = _el("text", {
-          x: mx, y: my - 4, "font-size": 9,
-          fill: ctx.highlight ? "#e64a19" : "#616161",
-          "text-anchor": "middle", "class": "pt-edge-label", "data-edge-id": edge.id
-        }, g);
-        var parts = [];
-        if (edge.net) parts.push(edge.net);
-        if (!isControl && currentMa > 0) parts.push(PT.util.fmt(currentMa) + "mA");
-        if (isControl && edge.signal) parts.push(edge.signal);
-        label.textContent = parts.join(" · ");
-      }
-
-      // 上游 net 标签: 总线首边画在源短接中点 / 共享干线承载者画在干线顶端。
-      // 分支与 Vin 标签只含模块输入网络名, 此处保证上游网络名 (如 VSYS) 仍可追溯。
-      if (!isControl && edge.net) {
-        if (edge.__bus && edge.__bus.first) {
-          var bb = edge.__bus;
-          var nlabel = _el("text", {
-            x: (bb.sx + bb.busX) / 2, y: bb.sy - 6, "font-size": 9,
-            fill: ctx.highlight ? "#e64a19" : "#616161",
-            "text-anchor": "middle", "class": "pt-edge-label pt-edge-net-label", "data-edge-id": edge.id
-          }, g);
-          nlabel.textContent = edge.net;
-        } else if (edge.__trunk && edge.__trunk.shared) {
-          var tk2 = edge.__trunk;
-          var tlabel = _el("text", {
-            x: tk2.x, y: tk2.y1 - 6, "font-size": 9,
-            fill: ctx.highlight ? "#e64a19" : "#616161",
-            "text-anchor": "middle", "class": "pt-edge-label pt-edge-net-label", "data-edge-id": edge.id
-          }, g);
-          tlabel.textContent = edge.net;
-        }
       }
     }
 
     return hit;
+  }
+
+  /**
+   * 跨列对偶"输出合并短接线": 对偶轨成员分列放置时, 两簇输出端之间画连接,
+   * 并在两端成员节点的输出端口画合并结点圆点 —— 表示输出合并后一起输出。
+   * @param {SVGGElement} g
+   * @param {object} link  { id, sections, am, bm }  am/bm 为两端成员节点 id
+   * @param {object} ctx   { posOf(nid) -> {x,y,w,h} 绝对坐标 }
+   */
+  function renderPairLink(g, link, ctx) {
+    ctx = ctx || {};
+    if (!link.sections || !link.sections[0]) return;
+    var d = sectionsToPath(link.sections);
+    if (!d) return;
+    _el("path", {
+      d: d, fill: "none", stroke: "#7e57c2", "stroke-width": 2,
+      "class": "pt-pair-link"
+    }, g);
+    // 合并结点 (两端成员的输出端口)
+    var dots = [];
+    (link.am || []).concat(link.bm || []).forEach(function (nid) {
+      var r = ctx.posOf && ctx.posOf(nid);
+      if (r) dots.push({ x: r.x + r.w, y: r.y + r.h / 2 });
+    });
+    dots.forEach(function (pt) {
+      _el("circle", {
+        cx: pt.x, cy: pt.y, r: 3,
+        fill: "#7e57c2", "class": "pt-pair-link-dot"
+      }, g);
+    });
+    // 跨越弧 (异网交叉时, 布局阶段已写入 link.__hops)
+    (link.__hops || []).forEach(function (hp) {
+      var hg = _el("g", { "class": "pt-edge-hop" }, g);
+      _el("line", {
+        x1: hp.x - 5.5, y1: hp.y, x2: hp.x + 5.5, y2: hp.y,
+        stroke: "#fafafa", "stroke-width": 4, "class": "pt-edge-hop-mask"
+      }, hg);
+      _el("path", {
+        d: "M " + (hp.x - 5) + " " + hp.y + " A 5 5 0 0 1 " + (hp.x + 5) + " " + hp.y,
+        fill: "none", stroke: "#7e57c2", "stroke-width": 1.6
+      }, hg);
+    });
   }
 
   /**
@@ -357,6 +363,7 @@
     sectionsToPath: sectionsToPath,
     renderEdge: renderEdge,
     renderEdgeDecor: renderEdgeDecor,
+    renderPairLink: renderPairLink,
     vinNetName: vinNetName,
     bundleByNet: bundleByNet
   };

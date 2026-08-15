@@ -23,6 +23,8 @@
       .pt-edge { fill: none; }
       .pt-edge-hop-mask { stroke: #ffffff; }
       .pt-edge-hit { display: none; }
+      .pt-pair-link { stroke-dasharray: 6,3; opacity: 0.9; }
+      .pt-pair-link-dot { stroke: #fff; stroke-width: 1; }
       .pt-watermark { font-family: system-ui, sans-serif; }
     `;
     clone.insertBefore(style, clone.firstChild);

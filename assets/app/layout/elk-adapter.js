@@ -81,17 +81,30 @@
    * 降级布局: 层次化简化 layered 布局 (在 ELK 不可用时使用, 保证 file:// 也能跑)
    * - 递归处理分组嵌套: 子分组先布局, 尺寸由内容 + 内边距撑起
    * - 每个容器内按 Kahn 最长路分层 (只参考 power 边, 控制边不参与分层)
+   * - 层间距按"穿越该层边界的 net 通道数"动态加宽 (平行干线保持最小间距 LANE_GAP)
    * - 跨容器边把端点向上提升 (lift) 到本容器直接孩子后再参与分层
    * - 空分组 (成员被过滤/聚焦隐藏) 自动从 children 移除
    * - 节点坐标为相对父容器原点 (渲染器会累加分组偏移); 边 sections 用世界绝对坐标
+   * - 走线 (列间通道化):
+   *   相邻列边 H-V-H, 竖直段走列间间隙车道, 同 net 合并共享干线, 异网 ≥ LANE_GAP;
+   *   跨列边 H-V-H-V-H, 在中间列模块间的"水平空隙带"穿过, 绝不穿模块身体;
+   *   同节点多路入/出沿边缘纵向分散端口 (负载多路输入各自独立进线, 不先合并);
+   *   同源扇出 ≥3 且同 net: 总线拓扑 (一条竖直干线 + 各目标水平分支)。
    */
   function _fallbackLayout(elkGraph) {
-    var LAYER_GAP = 56;    // 层间水平间距
     var NODE_GAP = 24;     // 同层节点垂直间距
     var GROUP_PAD = { t: 48, l: 16, r: 16, b: 16 };  // 分组内边距 (同 layoutOpts.groupOptions)
     var ROOT_PAD = 24;
+    var BASE_GAP = 56;     // 最小层间水平间距
+    var LANE_GAP = 12;     // 平行竖直干线最小间距
+    var GAP_MARGIN = 60;   // 层间距余量 (= 节点 CLR*2 + 分组 padding 等)
+    var PORT_STEP = 12;    // 同节点多路入/出端口的纵向间距
+    var PORT_MARGIN = 10;  // 端口距节点上下缘的最小距离
+    var BAND_CLR = 8;      // 跨列水平空隙带与模块的安全间距
+    var CLR = 14;          // 走线与节点的安全间距
 
     var edges = elkGraph.edges || [];
+    var depths = elkGraph.__depths || {};
 
     // 清理上一次布局挂在 Graph 边上的渲染标记, 防止折叠/过滤后残留
     edges.forEach(function (e) {
@@ -99,6 +112,7 @@
         e.__edge.__bus = null;
         e.__edge.__trunk = null;
         e.__edge.__hops = null;
+        e.__edge.__vinHidden = null;
       }
     });
 
@@ -122,8 +136,9 @@
 
     /** 布局 pair 容器: 成员垂直堆叠 (BUCK 上 LDO 下), 尺寸由成员撑起 */
     function layoutPair(container) {
-      var PAD = { t: 26, l: 6, r: 6, b: 6 };  // 上留白放标签
-      var GAP = 8;
+      // 跨列对偶簇不显示标题, 上留白收窄
+      var PAD = container.__noTitle ? { t: 8, l: 6, r: 6, b: 6 } : { t: 26, l: 6, r: 6, b: 6 };
+      var GAP = container.__noTitle ? 4 : 8;
       var w = 0;
       (container.children || []).forEach(function (m) { if ((m.width || 0) > w) w = m.width; });
       var y = PAD.t;
@@ -208,9 +223,42 @@
         }
       });
 
-      // 逐层放置: 每层一列, x 按前层最大宽度累加, y 同层垂直堆叠
-      var xCursor = pad.l;
+      // 动态层间距: 统计穿越每个层边界 b (layer b 与 b+1 之间) 的 net 通道数,
+      // 间距 = 通道数 * LANE_GAP + GAP_MARGIN —— 一二层之间需要走多少条平行干线,
+      // 就留多宽, 避免干线挤在一起或贴到模块边缘。
       var sortedLayers = Object.keys(layers).map(Number).sort(function (a, b) { return a - b; });
+      var maxLayer = sortedLayers.length ? sortedLayers[sortedLayers.length - 1] : 0;
+      var gapOf = {};
+      for (var b = 0; b < maxLayer; b++) {
+        var chNets = {};
+        edges.forEach(function (e) {
+          var ge = e.__edge;
+          if (!ge) return;
+          var nk = ge.type === "control" ? "__ctl__" : (ge.net || ("__e_" + e.id));
+          var s = liftTo(e.sources && e.sources[0], childSet);
+          var t = liftTo(e.targets && e.targets[0], childSet);
+          var hit = false;
+          if (s && t) {
+            if (s === t) return;
+            var ls = layer[s], lt = layer[t];
+            if (ls <= b && lt >= b + 1) hit = true;   // 前向穿越
+            if (lt <= b && ls >= b + 1) hit = true;   // 后向穿越 (PG 等)
+          } else if (s || t) {
+            // 进/出容器的边: 按 power 深度判断流向 (深度增加 = 向右),
+            // 只在其源侧/目标侧间隙占通道
+            var fd = depths[ge.from], td = depths[ge.to];
+            if (fd == null || td == null || td <= fd) return;
+            if (s && layer[s] === b) hit = true;             // 出容器: 源侧间隙
+            if (!s && t && layer[t] === b + 1) hit = true;   // 入容器: 目标侧间隙
+          }
+          if (hit) chNets[nk] = 1;
+        });
+        var nch = Object.keys(chNets).length;
+        gapOf[b] = nch <= 1 ? BASE_GAP : nch * LANE_GAP + GAP_MARGIN;
+      }
+
+      // 逐层放置: 每层一列, x 按前层最大宽度 + 动态层间距累加, y 同层垂直堆叠
+      var xCursor = pad.l;
       var prevCenters = null;  // 上一层各 child 的 y 中心 (用于重心排序)
       sortedLayers.forEach(function (l, li) {
         var list = layers[l].slice();
@@ -250,7 +298,7 @@
           if ((c.width || 0) > wMax) wMax = c.width;
         });
         prevCenters = centers;
-        xCursor += wMax + LAYER_GAP;
+        xCursor += wMax + (gapOf[l] != null ? gapOf[l] : BASE_GAP);
       });
 
       // 容器尺寸 = 内容 bbox + 内边距
@@ -287,31 +335,29 @@
       return null;
     }
 
-    /* ================= 正交避让路由 =================
-     * 收集所有"真实节点"矩形作为障碍, 在由节点边缘生成的网格坐标上跑 A*,
-     * 只允许 H-V-H (源→右 / 竖直 / →目标左) 的最少折线路径,
-     * 并对共用同一通道的边分配不同轨道, 消除重叠与穿模块。 */
+    /* ================= 正交走线 (列间通道化) =================
+     * 节点按 x 归并为若干"列", 列间间隙是唯一的竖直走线区:
+     * - 相邻列边 H-V-H; 跨列边 H-V-H-V-H (在中间列模块间的"水平空隙带"穿过, 不穿模块)
+     * - 间隙内竖直干线按 net 分配车道: 同 net 共线合并, 异网保持 LANE_GAP 最小间距
+     * - 同节点多路入/出: 端口沿边缘纵向分散 (负载多路输入各自独立进线, 不先合并)
+     */
 
-    // 1) 障碍矩形: 仅真实节点 (有 __node), 不含分组/pair 外框
+    // 1) 障碍矩形: 真实节点 + 折叠聚合节点 (分组/pair 外框不算障碍)
     var obstacles = [];
     Object.keys(abs).forEach(function (id) {
       var nd = nodeById[id];
-      if (nd && nd.__node) obstacles.push(abs[id]);
+      if (nd && (nd.__node || nd.__collapsed)) obstacles.push(abs[id]);
     });
 
-    var CLR = 14;  // 与节点的安全间距
-
-    // 线段 (x1,y1)-(x2,y2) 是否穿过任一障碍 (含 CLR 外扩)
-    function segBlocked(x1, y1, x2, y2, sRect, tRect) {
+    // 线段 (x1,y1)-(x2,y2) 是否穿过任一障碍 (含 clr 外扩; 起止节点不算障碍)
+    function segBlockedClr(x1, y1, x2, y2, sRect, tRect, clr) {
       var minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
       var minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
       for (var i = 0; i < obstacles.length; i++) {
         var r = obstacles[i];
-        if (r === sRect || r === tRect) continue;   // 起止节点不算障碍
-        var rx1 = r.x - CLR, ry1 = r.y - CLR, rx2 = r.x + r.w + CLR, ry2 = r.y + r.h + CLR;
-        // 线段(轴对齐)与矩形相交判定
+        if (r === sRect || r === tRect) continue;
+        var rx1 = r.x - clr, ry1 = r.y - clr, rx2 = r.x + r.w + clr, ry2 = r.y + r.h + clr;
         if (maxX < rx1 || minX > rx2 || maxY < ry1 || minY > ry2) continue;
-        // 轴对齐线段: 若严格穿过矩形内部即阻挡
         if (x1 === x2) {  // 竖线
           if (x1 > rx1 && x1 < rx2 && maxY > ry1 && minY < ry2) return true;
         } else {          // 横线
@@ -320,19 +366,66 @@
       }
       return false;
     }
+    function segBlocked(x1, y1, x2, y2, sRect, tRect) {
+      return segBlockedClr(x1, y1, x2, y2, sRect, tRect, CLR);
+    }
 
-    // 候选竖直通道 x 坐标: 所有节点左右缘外扩 CLR + 起止中点
-    var xLanes = {};
-    obstacles.forEach(function (r) {
-      xLanes[Math.round(r.x - CLR)] = 1;
-      xLanes[Math.round(r.x + r.w + CLR)] = 1;
+    // 2) 列归并: x 方向重叠/相接的节点归为同列; 列间间隙 = 竖直走线通道
+    var runs = [];
+    obstacles.slice().sort(function (a, b) { return a.x - b.x; }).forEach(function (r) {
+      var last = runs[runs.length - 1];
+      if (last && r.x <= last.x2 + 4) {
+        if (r.x + r.w > last.x2) last.x2 = r.x + r.w;
+        r.__run = runs.length - 1;
+      } else {
+        runs.push({ x1: r.x, x2: r.x + r.w });
+        r.__run = runs.length - 1;
+      }
     });
+    function runOf(rect) {
+      var cx = rect.x + rect.w / 2;
+      for (var i = 0; i < runs.length; i++) {
+        if (cx >= runs[i].x1 - 2 && cx <= runs[i].x2 + 2) return i;
+      }
+      return -1;
+    }
+    /** 列 runIdx 与其右邻列之间的可用走线区间 (两侧留 CLR 安全间距);
+     *  runIdx=-1 表示首列左侧; 末列之后自动外扩 */
+    function gapZone(runIdx) {
+      if (runIdx < 0) {
+        var xr = runs[0].x1 - CLR;
+        return { x1: xr - 48, x2: xr };
+      }
+      var l = runs[runIdx], r = runs[runIdx + 1];
+      var x1 = l.x2 + CLR;
+      var x2 = r ? r.x1 - CLR : l.x2 + CLR + 48;
+      if (x2 < x1 + 12) x2 = x1 + 12;
+      return { x1: x1, x2: x2 };
+    }
 
-    // 2) 总线拓扑路由:
-    //    同一源节点向右扇出到多个右侧目标时, 合并为一条竖直总线干线 + 各目标短分支,
-    //    而非多条平行长线 (VSYS 典型场景)。其余边仍走 H-V-H 避让。
+    /** 边的 net key (控制边统一 __ctl__ 共享车道) */
+    function netOf(e) {
+      var ge = e.__edge;
+      if (ge && ge.type === "control") return "__ctl__";
+      return (ge && ge.net) || ("__nonet_" + e.id);
+    }
 
-    // 先按 (源id) 分组, 找出"向右扇出 ≥3"的源
+    var BUS_SRC_MIN = 3;   // 同源同 net 扇出达到该数才合并成总线
+    var busEdgeIds = {};   // 被总线接管的边 id
+    var recs = [];         // 全部走线记录
+    var zones = {};        // runIdx -> {x1, x2, segs: []}
+
+    /** 登记一条竖直走线段 (参与车道分配; kind: bus/n=普通/x=跨列/link=对偶短接) */
+    function addSeg(runIdx, net, y1, y2, kind, rec) {
+      var z = gapZone(runIdx);
+      var key = String(runIdx);
+      if (!zones[key]) zones[key] = { x1: z.x1, x2: z.x2, segs: [] };
+      var sg = { net: net, y1: Math.min(y1, y2), y2: Math.max(y1, y2), kind: kind, rec: rec, x: 0 };
+      zones[key].segs.push(sg);
+      return sg;
+    }
+
+    // 3) 总线检测: 同一源节点、同 net、向右扇出 ≥3 → 一条竖直干线 + 各目标水平分支
     var bySrc = {};
     edges.forEach(function (e) {
       var s = resolveAbs(e.sources && e.sources[0]);
@@ -344,221 +437,388 @@
       (bySrc[key] = bySrc[key] || []).push({ e: e, s: s, t: t, forward: forward, isControl: isControl });
     });
 
-    var BUS_SRC_MIN = 3;   // 扇出达到该数才合并成总线
-    var busEdgeIds = {};   // 被总线接管的边 id
-
-    var routed = [];
-
     Object.keys(bySrc).forEach(function (srcId) {
       var list = bySrc[srcId];
-      var fwd = list.filter(function (r) { return r.forward && !r.isControl; });
-      if (fwd.length < BUS_SRC_MIN) return;   // 不够扇出, 走普通路由
-
-      // 源出口点
-      var s = fwd[0].s;
-      var sx = s.x + s.w, sy = s.y + s.h / 2;
-      // 目标按 y 排序
-      fwd.sort(function (a, b) { return (a.t.y + a.t.h / 2) - (b.t.y + b.t.h / 2); });
-
-      // 总线竖直干线 x: 源右缘到最近目标左缘的中点, 但保证避开障碍
-      var minTx = Math.min.apply(null, fwd.map(function (r) { return r.t.x; }));
-      var busX = Math.round((sx + minTx) / 2);
-      // 若干线 x 与源右缘太近, 外推一点
-      if (busX < sx + 20) busX = sx + 28;
-
-      // 干线 y 范围: 覆盖所有目标 y 中心 与 源 y
-      var ys = fwd.map(function (r) { return r.t.y + r.t.h / 2; });
-      ys.push(sy);
-      var busY1 = Math.min.apply(null, ys);
-      var busY2 = Math.max.apply(null, ys);
-
-      // 源 → 干线顶/入点: 水平短接到 busX
-      // 每条目标边: sections = [源短接(仅一次, 用首条边) + 干线 + 分支]
-      fwd.forEach(function (r, i) {
-        var ty = r.t.y + r.t.h / 2;
-        var tx = r.t.x;
-        busEdgeIds[r.e.id] = 1;
-        // __bus 挂在 Graph 边对象 (e.__edge) 上 —— 渲染器 renderEdge 读的是它
-        r.e.__edge.__bus = { busX: busX, busY1: busY1, busY2: busY2, sx: sx, sy: sy, first: i === 0 };
-        r.e.sections = [{
-          id: r.e.id + "_sec",
-          startPoint: { x: busX, y: ty },
-          bendPoints: [],
-          endPoint: { x: tx, y: ty }
-        }];
-        routed.push({ e: r.e, pts: [{ x: busX, y: ty }, { x: tx, y: ty }], sy: ty, ty: ty, bus: true });
+      // 按 net 细分: 只有同 net 的扇出才合并成总线
+      var byNet = {};
+      list.forEach(function (r) {
+        if (!r.forward || r.isControl) return;
+        var nk = netOf(r.e);
+        (byNet[nk] = byNet[nk] || []).push(r);
+      });
+      Object.keys(byNet).forEach(function (nk) {
+        var fwd = byNet[nk];
+        if (fwd.length < BUS_SRC_MIN) return;
+        var s = fwd[0].s;
+        var sr = runOf(s);
+        // 成员目标必须都在紧邻右列, 否则退出总线单独走线
+        var members = fwd.filter(function (r) { return sr >= 0 && runOf(r.t) === sr + 1; });
+        if (members.length < BUS_SRC_MIN) return;
+        members.sort(function (a, b) { return (a.t.y + a.t.h / 2) - (b.t.y + b.t.h / 2); });
+        var rec = {
+          kind: "bus", net: nk, s: s,
+          sx: s.x + s.w, sy: s.y + s.h / 2,
+          members: members
+        };
+        members.forEach(function (m) { busEdgeIds[m.e.id] = 1; });
+        var ys = members.map(function (m) { return m.t.y + m.t.h / 2; });
+        ys.push(rec.sy);
+        rec.trunkSeg = addSeg(sr, nk, Math.min.apply(null, ys), Math.max.apply(null, ys), "bus", rec);
+        recs.push(rec);
       });
     });
 
-    // 普通 H-V-H 路由: 未被总线接管的边
+    // 4) 端口分配: 同节点的多路入边/出边沿边缘纵向分散 (按对端 y 排序减少交叉)。
+    //    负载多路输入由此各自独立进线, 不在节点外先合并; 总线源保持单点出线。
+    var ports = {};   // edgeId -> {sy, ty}
+    (function assignPorts() {
+      var inBy = {}, outBy = {};
+      edges.forEach(function (e) {
+        if (e.__edge && e.__edge.type === "control") return;
+        var s = resolveAbs(e.sources && e.sources[0]);
+        var t = resolveAbs(e.targets && e.targets[0]);
+        if (!s || !t) return;
+        (inBy[e.targets[0]] = inBy[e.targets[0]] || []).push({ e: e, other: s.y + s.h / 2 });
+        if (!busEdgeIds[e.id]) {
+          (outBy[e.sources[0]] = outBy[e.sources[0]] || []).push({ e: e, other: t.y + t.h / 2 });
+        }
+      });
+      function spread(map, key) {
+        Object.keys(map).forEach(function (nid) {
+          var arr = map[nid];
+          if (arr.length < 2) return;
+          var r = resolveAbs(nid);
+          if (!r) return;
+          var n = arr.length;
+          var maxSpan = Math.max(0, r.h - 2 * PORT_MARGIN);
+          var step = Math.min(PORT_STEP, maxSpan / (n - 1));
+          if (step <= 0) return;
+          arr.sort(function (a, b) { return a.other - b.other; });
+          var cy = r.y + r.h / 2;
+          var span = step * (n - 1);
+          arr.forEach(function (it, i) {
+            ports[it.e.id] = ports[it.e.id] || {};
+            ports[it.e.id][key] = cy - span / 2 + i * step;
+          });
+        });
+      }
+      spread(inBy, "ty");
+      spread(outBy, "sy");
+    })();
+    function portY(e, rect, key) {
+      var p = ports[e.id];
+      return (p && p[key] != null) ? p[key] : rect.y + rect.h / 2;
+    }
+
+    // 5) 跨列走线: H-V-H-V-H —— 在中间列模块间的"水平空隙带"穿过, 绝不穿模块身体
+    //    同一带可被同 net 复用; 异 net 要求水平 x 区间不重叠 (间隔 ≥6), 避免带耗尽
+    var bandUsed = {};   // Math.round(y) -> [{x1, x2, net}]
+    /**
+     * @param rec      {s,t,sx,sy,tx,ty,net}
+     * @param segRun1  竖直段1所在间隙 (源列右侧)
+     * @param segRun2  竖直段2所在间隙
+     * @param crossLo/crossHi 需要水平穿越的列范围 (含两端)
+     */
+    function routeExtended(rec, segRun1, segRun2, crossLo, crossHi) {
+      var z1 = gapZone(segRun1), z2 = gapZone(segRun2);
+      var g1 = (z1.x1 + z1.x2) / 2, g2 = (z2.x1 + z2.x2) / 2;
+      // 空隙带候选: 穿越列 + 源列 + 目标列全部模块的 y 区间 (外扩 BAND_CLR) 补集 ——
+      // 源/目标自己也被当成障碍, 水平段绝不从模块"上/下边中间"穿过。
+      // 带按 4px 粒度逐点枚举报全, 防止"近处带被异网占用时把挡板挤进模块" (补集重算挡板移动)。
+      var ints = [];
+      obstacles.forEach(function (r) {
+        if (r.__run < crossLo - 1 || r.__run > crossHi + 1) return;
+        ints.push([r.y - BAND_CLR, r.y + r.h + BAND_CLR]);
+      });
+      ints.sort(function (a, b) { return a[0] - b[0]; });
+      var merged = [];
+      ints.forEach(function (iv) {
+        var last = merged[merged.length - 1];
+        if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]);
+        else merged.push(iv.slice());
+      });
+      var top = merged.length ? merged[0][0] - 40 : 0;
+      var bot = merged.length ? merged[merged.length - 1][1] + 40 : Math.max(rec.sy, rec.ty) + 40;
+      var cands = [];
+      if (merged.length) cands.push((rec.sy + rec.ty) / 2);
+      for (var yi = Math.floor(top / 4) * 4; yi <= bot; yi += 4) cands.push(yi);
+      var lo2 = Math.min(g1, g2), hi2 = Math.max(g1, g2);
+      var bands = cands.filter(function (yc) {
+        var ok = !merged.some(function (iv) { return yc > iv[0] && yc < iv[1]; });
+        if (!ok) return false;
+        // 异网同水平带且 x 区间重叠时跳过 (同 net 可复用)
+        var spans = bandUsed[Math.round(yc)] || [];
+        return !spans.some(function (sp) {
+          return sp.net !== rec.net && sp.x1 < hi2 - 6 && sp.x2 > lo2 + 6;
+        });
+      });
+      // 优先"源水平短"的带, 其次总行程短
+      bands.sort(function (a, b) {
+        var ca = Math.abs(a - rec.sy) * 1.5 + Math.abs(a - rec.ty);
+        var cb = Math.abs(b - rec.sy) * 1.5 + Math.abs(b - rec.ty);
+        return ca - cb;
+      });
+      for (var bi = 0; bi < bands.length; bi++) {
+        var yc = bands[bi];
+        var bk = Math.round(yc);
+        var spans = bandUsed[bk] || [];
+        if (segBlocked(rec.sx, rec.sy, g1, rec.sy, rec.s, rec.t)) continue;
+        if (segBlocked(g1, rec.sy, g1, yc, rec.s, rec.t)) continue;
+        if (segBlockedClr(g1, yc, g2, yc, rec.s, rec.t, BAND_CLR)) continue;
+        if (segBlocked(g2, yc, g2, rec.ty, rec.s, rec.t)) continue;
+        if (segBlocked(g2, rec.ty, rec.tx, rec.ty, rec.s, rec.t)) continue;
+        spans.push({ x1: lo2, x2: hi2, net: rec.net });
+        bandUsed[bk] = spans;
+        rec.yc = yc;
+        rec.seg1 = addSeg(segRun1, rec.net, rec.sy, yc, "x", rec);
+        rec.seg2 = addSeg(segRun2, rec.net, yc, rec.ty, "x", rec);
+        return true;
+      }
+      return false;
+    }
+
+    // 6) 普通边路由: 相邻列 H-V-H; 跨列 power 走空隙带; 后向/同列/控制边简单绕行
     edges.forEach(function (e) {
       if (busEdgeIds[e.id]) return;
       var s = resolveAbs(e.sources && e.sources[0]);
       var t = resolveAbs(e.targets && e.targets[0]);
       if (!s || !t) return;
-      var sx = s.x + s.w, sy = s.y + s.h / 2;
-      var tx = t.x, ty = t.y + t.h / 2;
-
-      // 关键: 跨间隙的边, 竖直段强制走"间隙中线", 让多条跨层边汇成一条共享干线,
-      // 而不是各自占一条通道互相重叠。间隙中线 = 源右缘到目标左缘的中点 (源在左/目标在右时)。
-      var pts = null;
-      if (tx > sx + 4) {   // 前向边 (源左 目标右)
-        var gapX = Math.round((sx + tx) / 2);
-        // 干线不与源/目标自身重叠, 且三段不穿障碍才采用
-        if (!segBlocked(sx, sy, gapX, sy, s, t) &&
-            !segBlocked(gapX, sy, gapX, ty, s, t) &&
-            !segBlocked(gapX, ty, tx, ty, s, t)) {
-          pts = [ { x: sx, y: sy }, { x: gapX, y: sy }, { x: gapX, y: ty }, { x: tx, y: ty } ];
-        }
-      }
-      if (!pts) {
-        // 后向边或前向被挡: 从候选通道里挑不穿的, 偏好靠近间隙中线
-        var prefX = Math.round((sx + tx) / 2);
-        var cands = Object.keys(xLanes).map(Number);
-        cands.push(prefX);
-        cands = cands.filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
-        var best = null;
-        for (var ci = 0; ci < cands.length; ci++) {
-          var mx = cands[ci];
-          if (segBlocked(sx, sy, mx, sy, s, t)) continue;
-          if (segBlocked(mx, sy, mx, ty, s, t)) continue;
-          if (segBlocked(mx, ty, tx, ty, s, t)) continue;
-          var cost = Math.abs(mx - sx) + Math.abs(tx - mx) + Math.abs(ty - sy) * 0.5
-                   + Math.abs(mx - prefX) * 0.5;
-          if (!best || cost < best.cost) best = { mx: mx, cost: cost };
-        }
-        if (best) {
-          pts = [ { x: sx, y: sy }, { x: best.mx, y: sy }, { x: best.mx, y: ty }, { x: tx, y: ty } ];
+      var isCtl = e.__edge && e.__edge.type === "control";
+      var rec = {
+          e: e, s: s, t: t, net: netOf(e),
+          sx: s.x + s.w, sy: portY(e, s, "sy"),
+          tx: t.x, ty: portY(e, t, "ty")
+        };
+        var sr = runOf(s), tr = runOf(t);
+        if (sr >= 0 && tr === sr + 1) {
+          rec.kind = "n";
+          rec.seg = addSeg(sr, rec.net, rec.sy, rec.ty, "n", rec);
+        } else if (sr >= 0 && tr > sr + 1) {
+          // 前向跨列: H-V-H-V-H 走中间列水平空隙带
+          rec.kind = "x";
+          if (!routeExtended(rec, sr, tr - 1, sr + 1, tr - 1)) {
+            rec.kind = "b";
+            rec.seg = addSeg(tr - 1, rec.net, rec.sy, rec.ty, "n", rec);
+          }
+        } else if (sr >= 0 && tr >= 0 && tr < sr) {
+          // 后向跨列 (PG 等): 同样走水平空隙带, 穿越范围含目标列 (带在目标上方/下方)
+          rec.kind = "x";
+          if (!routeExtended(rec, sr, tr - 1, tr, sr - 1)) {
+            rec.kind = "b";
+            rec.seg = addSeg(tr - 1, rec.net, rec.sy, rec.ty, "n", rec);
+          }
         } else {
-          var midX = prefX;
-          pts = [ { x: sx, y: sy }, { x: midX, y: sy }, { x: midX, y: ty }, { x: tx, y: ty } ];
+          // 同列边: 绕本列右侧车道 (同列节点垂直堆叠不重叠, 目标水平段不穿兄弟)
+          rec.kind = "b";
+          rec.seg = addSeg(Math.max(sr, 0), rec.net, rec.sy, rec.ty, "n", rec);
         }
-      }
-      routed.push({ e: e, pts: pts, sy: sy, ty: ty });
+        recs.push(rec);
     });
 
-    // 3) 通道去重叠: 普通 H-V-H 边共用同一竖直 x 时, 同 net 汇成一条干线;
-    //    异网干线绝不共线 —— x 间距 <12px 且 y 区间重叠时横向拉开,
-    //    保证"相连 (同网共线)"与"跨越 (异网分离)"在图上可区分。
-    function netKeyOf(r) {
-      var ge = r.e.__edge;
-      if (ge && ge.type === "control") return "__ctl__";
-      return (ge && ge.net) || ("__nonet_" + r.e.id);
-    }
-    var vertEdges = routed.filter(function (r) { return !r.bus; });
-    // 按 x 聚类 (±3px) 内再按 net 拆分
-    vertEdges.sort(function (a, b) { return a.pts[1].x - b.pts[1].x; });
-    var clusters = [];
-    vertEdges.forEach(function (r) {
-      var x = r.pts[1].x;
-      var nk = netKeyOf(r);
-      var c = clusters[clusters.length - 1];
-      if (c && Math.abs(x - c.x) <= 3 && c.net === nk) { c.items.push(r); }
-      else clusters.push({ x: x, net: nk, items: [r] });
+    // 7) 跨列对偶短接线: 成员输出侧相连 (不建功率边, 视觉上输出合并后一起输出)
+    (elkGraph.__pairLinks || []).forEach(function (link) {
+      var A = resolveAbs(link.a), B = resolveAbs(link.b);
+      if (!A || !B) return;
+      var rec = {
+        link: link, s: A, t: B, net: "__pairlink_" + link.id,
+        sx: A.x + A.w, sy: A.y + A.h / 2,
+        tx: B.x + B.w, ty: B.y + B.h / 2     // 终点为 B 右缘 (输出侧)
+      };
+      var sr = runOf(A), tr = runOf(B);
+      var ok = false;
+      if (sr >= 0 && tr > sr) {
+        rec.kind = "x";
+        // 从 A 右缘穿中间列 + B 所在列, 在 B 右侧间隙折回 B 右缘
+        ok = routeExtended(rec, sr, tr, sr + 1, tr);
+      } else if (sr >= 0 && sr === tr) {
+        rec.kind = "b";
+        rec.pts = (function () {
+          var mx = Math.round(runs[sr].x2 + CLR + 6);
+          return [{ x: rec.sx, y: rec.sy }, { x: mx, y: rec.sy },
+                  { x: mx, y: rec.ty }, { x: rec.tx, y: rec.ty }];
+        })();
+        ok = true;
+      }
+      if (ok) recs.push(rec);
     });
-    // 相邻干线簇 (异网) 若 y 区间重叠且 x 间距 < 12, 把它们横向拉开
-    for (var k = 1; k < clusters.length; k++) {
-      var prev = clusters[k - 1], cur = clusters[k];
-      if (cur.net === prev.net) continue;   // 同网共享干线, 无需拉开
-      if (cur.x - prev.x >= 12) continue;
-      var overlap = prev.items.some(function (a) {
-        return cur.items.some(function (b) {
-          var a1 = Math.min(a.sy, a.ty), a2 = Math.max(a.sy, a.ty);
-          var b1 = Math.min(b.sy, b.ty), b2 = Math.max(b.sy, b.ty);
-          return a1 < b2 && b1 < a2;
-        });
+
+    // 8) 车道分配: 每个间隙内, 车道以间隙中线为中心排开;
+    //    同 net 共线 (共享干线), 异网保持 LANE_GAP 最小间距 (过挤时按比例收紧, 最小 6)。
+    //    先修正总线干线的 y 范围 (端口分配后目标 y 可能偏移)。
+    recs.forEach(function (rec) {
+      if (rec.kind !== "bus") return;
+      var ys = rec.members.map(function (m) { return portY(m.e, m.t, "ty"); });
+      ys.push(rec.sy);
+      rec.trunkSeg.y1 = Math.min.apply(null, ys);
+      rec.trunkSeg.y2 = Math.max.apply(null, ys);
+    });
+    Object.keys(zones).forEach(function (zk) {
+      var z = zones[zk];
+      var byNet = {}, order = [];
+      z.segs.forEach(function (sg) {
+        if (!byNet[sg.net]) { byNet[sg.net] = []; order.push(sg.net); }
+        byNet[sg.net].push(sg);
       });
-      if (overlap) {
-        var shift = 12 - (cur.x - prev.x);
-        cur.items.forEach(function (r) {
-          r.pts[1].x += shift;
-          r.pts[2].x += shift;
-        });
-        cur.x += shift;
-      }
-    }
-
-    // 4) 共享干线合并 + 写回 sections
-    //    同一竖直 x 且**同一 net** 的多条边: 竖直段只画一次 (细线), 各边只保留自己的水平分支。
-    //    这样共享通道不会叠成粗线; 异网竖直段已在第 3 步横向分离, 不参与合并。
-
-    // 按 (x, net) 归并竖直段, 每段挑一条边作"干线承载者"
-    var trunkOwner = {};   // key(x|net) -> {y1,y2,owner,count}
-    routed.forEach(function (r) {
-      if (r.bus) return;
-      var y1 = Math.min(r.sy, r.ty), y2 = Math.max(r.sy, r.ty);
-      // 干线 key = x + net (异网不共享)
-      var key = Math.round(r.pts[1].x) + "|" + netKeyOf(r);
-      if (!trunkOwner[key]) {
-        trunkOwner[key] = { y1: y1, y2: y2, owner: r, count: 1 };
-        r.__drawTrunk = true;   // 这条边负责画整段干线
-      } else {
-        trunkOwner[key].y1 = Math.min(trunkOwner[key].y1, y1);
-        trunkOwner[key].y2 = Math.max(trunkOwner[key].y2, y2);
-        trunkOwner[key].count++;
-        r.__drawTrunk = false;
-      }
+      order.sort(function (a, b) {
+        function mid(nk) {
+          var arr = byNet[nk], sum = 0;
+          arr.forEach(function (sg) { sum += (sg.y1 + sg.y2) / 2; });
+          return sum / arr.length;
+        }
+        return mid(a) - mid(b);
+      });
+      var n = order.length;
+      if (!n) return;
+      var spacing = n > 1 ? Math.min(LANE_GAP, (z.x2 - z.x1) / n) : 0;
+      spacing = Math.max(6, spacing);
+      var startX = (z.x1 + z.x2) / 2 - spacing * (n - 1) / 2;
+      order.forEach(function (nk, i) {
+        var x = n === 1 ? (z.x1 + z.x2) / 2 : startX + i * spacing;
+        x = Math.max(z.x1, Math.min(z.x2, x));
+        byNet[nk].forEach(function (sg) { sg.x = x; });
+      });
     });
 
-    routed.forEach(function (r) {
-      if (r.bus) return;
-      var p = r.pts;
-      var owner = trunkOwner[Math.round(r.pts[1].x) + "|" + netKeyOf(r)];
-      if (r.__drawTrunk) {
-        // 干线承载者: 竖直整段由 __trunk 细线统一画, 自身路径也走 branchOnly 避免重复
-        // shared: 是否有 ≥2 条边共享该干线 (决定 T 型结点圆点与上游 net 标签)
-        r.e.__edge.__trunk = { x: r.pts[1].x, y1: owner.y1, y2: owner.y2, shared: owner.count > 1 };
-        r.e.sections = [{
-          id: r.e.id + "_sec",
-          startPoint: p[0],
-          bendPoints: [{ x: r.pts[1].x, y: r.sy }, { x: r.pts[1].x, y: r.ty }],
-          endPoint: p[3],
+    // 9) 生成 sections: 普通边同 (间隙, net) 合并共享干线 (branchOnly);
+    //    跨列边画完整 H-V-H-V-H; 总线首边负责源短接 + 干线
+    var trunkGroups = {};
+    recs.forEach(function (rec) {
+      if (rec.kind !== "n") return;
+      var key = rec.net + "@" + Math.round(rec.seg.x);
+      (trunkGroups[key] = trunkGroups[key] || []).push(rec);
+    });
+    Object.keys(trunkGroups).forEach(function (key) {
+      var arr = trunkGroups[key];
+      var x = arr[0].seg.x;
+      var y1 = Infinity, y2 = -Infinity;
+      arr.forEach(function (rec) {
+        y1 = Math.min(y1, rec.seg.y1);
+        y2 = Math.max(y2, rec.seg.y2);
+      });
+      arr.forEach(function (rec, i) {
+        // shared: 是否有 ≥2 条边共享该干线 (决定 T 型结点圆点)
+        if (i === 0 && rec.e.__edge) {
+          rec.e.__edge.__trunk = { x: x, y1: y1, y2: y2, shared: arr.length > 1 };
+        }
+        rec.e.sections = [{
+          id: rec.e.id + "_sec",
+          startPoint: { x: rec.sx, y: rec.sy },
+          bendPoints: [{ x: x, y: rec.sy }, { x: x, y: rec.ty }],
+          endPoint: { x: rec.tx, y: rec.ty },
           __branchOnly: true
         }];
-      } else {
-        // 非承载者: 只画水平分支 (源水平 与 目标水平), 竖直段由干线承载者画
-        r.e.sections = [{
-          id: r.e.id + "_sec",
-          startPoint: p[0],
-          bendPoints: [{ x: r.pts[1].x, y: r.sy }, { x: r.pts[1].x, y: r.ty }],
-          endPoint: p[3],
-          __branchOnly: true   // 渲染时跳过竖直段
-        }];
+      });
+    });
+
+    recs.forEach(function (rec) {
+      if (rec.kind === "x") {
+        var pts = [
+          { x: rec.sx, y: rec.sy },
+          { x: rec.seg1.x, y: rec.sy },
+          { x: rec.seg1.x, y: rec.yc },
+          { x: rec.seg2.x, y: rec.yc },
+          { x: rec.seg2.x, y: rec.ty },
+          { x: rec.tx, y: rec.ty }
+        ];
+        var secx = {
+          id: (rec.e ? rec.e.id : "link_" + rec.link.id) + "_sec",
+          startPoint: pts[0],
+          bendPoints: pts.slice(1, 5),
+          endPoint: pts[5]
+        };
+        if (rec.e) rec.e.sections = [secx];
+        else rec.link.sections = [secx];
+      } else if (rec.kind === "b") {
+        // 兜底路径也逐段过障碍校验 (不改路径, 只检测); 穿障碍时记入 __blocked 便于排查
+        var bmx = rec.seg ? rec.seg.x : rec.pts[1].x;
+        var bpts = [{ x: rec.sx, y: rec.sy }, { x: bmx, y: rec.sy },
+                    { x: bmx, y: rec.ty }, { x: rec.tx, y: rec.ty }];
+        for (var bi2 = 0; bi2 < bpts.length - 1; bi2++) {
+          if (segBlocked(bpts[bi2].x, bpts[bi2].y, bpts[bi2 + 1].x, bpts[bi2 + 1].y, rec.s, rec.t)) {
+            (rec.e ? rec.e.__edge.__blocked = true : 0);
+            if (typeof console !== "undefined") {
+              console.warn("[PT] 走线兜底未避开障碍:",
+                rec.e ? rec.e.id : rec.link.id,
+                Math.round(bpts[bi2].x) + "," + Math.round(bpts[bi2].y) + " → " +
+                Math.round(bpts[bi2 + 1].x) + "," + Math.round(bpts[bi2 + 1].y));
+            }
+            break;
+          }
+        }
+        var secb = {
+          id: (rec.e ? rec.e.id : "link_" + rec.link.id) + "_sec",
+          startPoint: bpts[0],
+          bendPoints: [bpts[1], bpts[2]],
+          endPoint: bpts[3]
+        };
+        if (rec.e) rec.e.sections = [secb];
+        else rec.link.sections = [secb];
+      } else if (rec.kind === "bus") {
+        var bx = rec.trunkSeg.x;
+        rec.members.forEach(function (m, i) {
+          var ty2 = portY(m.e, m.t, "ty");
+          // __bus 挂在 Graph 边对象上 —— 渲染器 renderEdge 读它
+          m.e.__edge.__bus = {
+            busX: bx, busY1: rec.trunkSeg.y1, busY2: rec.trunkSeg.y2,
+            sx: rec.sx, sy: rec.sy, first: i === 0
+          };
+          m.e.sections = [{
+            id: m.e.id + "_sec",
+            startPoint: { x: bx, y: ty2 },
+            bendPoints: [],
+            endPoint: { x: m.t.x, y: ty2 }
+          }];
+        });
       }
     });
 
-    // 5) 跨网交叉检测: 水平线段 × 异网竖直线段严格内交 → 水平侧记跳线点 (__hops)
-    //    渲染器据此画"跨越弧", 与 T 型结点圆点 (相连) 区分。
-    var segs = [];   // 每条 power 边实际绘制的线段 {ge, net, h, x1,x2,y1,y2}
-    function pushSeg(ge, net, x1, y1, x2, y2) {
+    // 10) 跨网交叉检测: 水平线段 × 异网竖直线段严格内交 → 水平侧记跳线点 (__hops)
+    //     渲染器据此画跨越弧, 与 T 型结点圆点 (相连) 区分。
+    var segs = [];   // 实际绘制的线段 {holder, net, h, x1,x2,y1,y2}
+    function pushSeg(holder, net, x1, y1, x2, y2) {
       if (Math.abs(x1 - x2) < 0.5 && Math.abs(y1 - y2) < 0.5) return;
       segs.push({
-        ge: ge, net: net, h: Math.abs(y1 - y2) < 0.5,
+        holder: holder, net: net, h: Math.abs(y1 - y2) < 0.5,
         x1: Math.min(x1, x2), x2: Math.max(x1, x2),
         y1: Math.min(y1, y2), y2: Math.max(y1, y2)
       });
     }
-    routed.forEach(function (r) {
-      var ge = r.e.__edge;
-      if (!ge || ge.type === "control") return;   // 控制虚线不参与跳线
-      var net = ge.net || ("__nonet_" + ge.id);
-      if (r.bus) {
-        var b = ge.__bus;
-        if (b && b.first) {
-          pushSeg(ge, net, b.sx, b.sy, b.busX, b.sy);            // 源短接
-          pushSeg(ge, net, b.busX, b.busY1, b.busX, b.busY2);    // 总线干线
+    recs.forEach(function (rec) {
+      var holder = rec.e ? rec.e.__edge : rec.link;
+      if (rec.e && rec.e.__edge && rec.e.__edge.type === "control") return;  // 控制虚线不参与跳线
+      if (rec.kind === "bus") {
+        var bx = rec.trunkSeg.x;
+        var first = rec.members[0];
+        pushSeg(first.e.__edge, rec.net, rec.sx, rec.sy, bx, rec.sy);               // 源短接
+        pushSeg(first.e.__edge, rec.net, bx, rec.trunkSeg.y1, bx, rec.trunkSeg.y2); // 总线干线
+        rec.members.forEach(function (m) {
+          var ty2 = portY(m.e, m.t, "ty");
+          pushSeg(m.e.__edge, rec.net, bx, ty2, m.t.x, ty2);                        // 分支
+        });
+      } else if (rec.kind === "n") {
+        var x = rec.seg.x;
+        pushSeg(holder, rec.net, rec.sx, rec.sy, x, rec.sy);   // 源水平分支
+        pushSeg(holder, rec.net, x, rec.ty, rec.tx, rec.ty);   // 目标水平分支
+      } else if (rec.kind === "x" || rec.kind === "b") {
+        var secArr = rec.e ? rec.e.sections : rec.link.sections;
+        var s0 = secArr && secArr[0];
+        if (!s0) return;
+        var pts = [s0.startPoint].concat(s0.bendPoints || []).concat([s0.endPoint]);
+        for (var i = 0; i < pts.length - 1; i++) {
+          pushSeg(holder, rec.net, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
         }
-        var bs = r.e.sections && r.e.sections[0];
-        if (bs) pushSeg(ge, net, bs.startPoint.x, bs.startPoint.y, bs.endPoint.x, bs.endPoint.y);  // 分支
-      } else {
-        var sec = r.e.sections && r.e.sections[0];
-        var bp = sec && sec.bendPoints || [];
-        if (bp.length >= 2) {
-          pushSeg(ge, net, sec.startPoint.x, sec.startPoint.y, bp[0].x, bp[0].y);  // 源水平分支
-          pushSeg(ge, net, bp[1].x, bp[1].y, sec.endPoint.x, sec.endPoint.y);      // 目标水平分支
-        }
-        if (ge.__trunk) pushSeg(ge, net, ge.__trunk.x, ge.__trunk.y1, ge.__trunk.x, ge.__trunk.y2);  // 共享干线
       }
+    });
+    // 共享干线 (每个 (间隙, net) 只画一次)
+    Object.keys(trunkGroups).forEach(function (key) {
+      var arr = trunkGroups[key];
+      var x = arr[0].seg.x;
+      var y1 = Infinity, y2 = -Infinity;
+      arr.forEach(function (rec) {
+        y1 = Math.min(y1, rec.seg.y1);
+        y2 = Math.max(y2, rec.seg.y2);
+      });
+      pushSeg(arr[0].e.__edge, arr[0].net, x, y1, x, y2);
     });
     for (var si = 0; si < segs.length; si++) {
       var A = segs[si];
@@ -569,12 +829,12 @@
         // 竖线 B 严格穿过水平线 A 内部 (端点 ±2 容差, T 型相接不算跨越)
         if (B.x1 <= A.x1 + 2 || B.x1 >= A.x2 - 2) continue;
         if (A.y1 <= B.y1 + 2 || A.y1 >= B.y2 - 2) continue;
-        A.ge.__hops = A.ge.__hops || [];
+        A.holder.__hops = A.holder.__hops || [];
         var hp = { x: B.x1, y: A.y1 };
-        var dup = A.ge.__hops.some(function (q) {
+        var dup = A.holder.__hops.some(function (q) {
           return Math.abs(q.x - hp.x) < 1 && Math.abs(q.y - hp.y) < 1;
         });
-        if (!dup) A.ge.__hops.push(hp);
+        if (!dup) A.holder.__hops.push(hp);
       }
     }
 
@@ -600,11 +860,33 @@
       edges: []
     };
 
-    // 先决定哪些节点被折叠聚合
+    // power 深度 (按 power 边最长路径, 源=0; 环安全) —— 跨列对偶判定 / 层间距通道数用
+    var powerDepth = {};
+    (function computePowerDepth() {
+      var memo = {};
+      var visiting = {};
+      function d(nid) {
+        if (memo[nid] != null) return memo[nid];
+        if (visiting[nid]) return 0;
+        visiting[nid] = true;
+        var ups = graph.upstreamPowerIds(nid);
+        var r = 0;
+        ups.forEach(function (u) { r = Math.max(r, d(u) + 1); });
+        visiting[nid] = false;
+        memo[nid] = r;
+        return r;
+      }
+      graph.nodeList().forEach(function (n) { d(n.id); });
+      powerDepth = memo;
+    })();
+
+    // 先决定哪些节点被折叠聚合 (只折叠叶子分组: 组内直接有节点;
+    // 嵌套分组折叠父级时, 子分组节点被父级摘要吸收, 不再生成子级聚合节点)
     var collapsedSet = {};   // groupId -> collapsedNode
     var nodeToCollapsed = {}; // nodeId -> collapsedGroupId
     Object.keys(collapsedGroups).forEach(function (gid) {
       if (!collapsedGroups[gid]) return;
+      if (graph.nodesInGroup(gid).length === 0) return;   // 只折叠叶子分组
       collapsedSet[gid] = PT.grouping.collapseGroupSummary(graph, gid);
       // 把组内所有节点映射过去
       var allGroupIds = [gid];
@@ -619,9 +901,14 @@
         });
       }
       graph.nodeList().forEach(function (n) {
-        if (allGroupIds.indexOf(n.group) >= 0) {
-          nodeToCollapsed[n.id] = gid;
+        if (allGroupIds.indexOf(n.group) < 0) return;
+        // 节点所在分组链上有更早的折叠组时跳过, 避免双重聚合
+        var anc = n.group;
+        while (anc) {
+          if (anc !== gid && collapsedSet[anc]) return;
+          anc = (graph.groups[anc] && graph.groups[anc].parent) || null;
         }
+        nodeToCollapsed[n.id] = gid;
       });
     });
 
@@ -656,17 +943,65 @@
       makeGroupElk(gid);
     });
 
-    // 对偶组 (pair_groups): 把 BUCK/LDO 短接对偶聚成一个单元, 成员仍单独渲染
+    // 对偶组 (pair_groups): 同列 (同 power 深度) 成员聚成一个 pair 单元, 成员仍单独渲染。
+    // 跨列对偶 (成员深度不同, 如 BUCK_06 一级 / LDO_06 二级) 不整体聚合 —— 按深度拆成独立列簇,
+    // 不显示总标题; 若各簇都有多路直接下游, 布局阶段在簇输出端之间画"合并短接线" (输出合并后一起输出)。
     var pairGroupMap = {};  // nodeId -> pairId
     var pairGroups = {};
+    var crossPairs = [];  // [{pg, clusterIds:[subId,...]}]
     (graph.data && graph.data.pair_groups || []).forEach(function (pg) {
       if (!pg || !pg.id || !Array.isArray(pg.members)) return;
       var valid = pg.members.filter(function (mid) {
         return !hiddenNodeIds.has(mid) && !nodeToCollapsed[mid];
       });
       if (valid.length < 2) return;   // 不足 2 个可见成员不聚合
-      pairGroups[pg.id] = { id: pg.id, label: pg.label || pg.id, members: valid };
-      valid.forEach(function (mid) { pairGroupMap[mid] = pg.id; });
+      var byDepth = {};
+      valid.forEach(function (mid) {
+        var d = powerDepth[mid] || 0;
+        (byDepth[d] = byDepth[d] || []).push(mid);
+      });
+      var dkeys = Object.keys(byDepth);
+      if (dkeys.length === 1) {
+        pairGroups[pg.id] = { id: pg.id, label: pg.label || pg.id, members: valid };
+        valid.forEach(function (mid) { pairGroupMap[mid] = pg.id; });
+        return;
+      }
+      // 跨列: 每列一个独立簇 (无标题, 仅浅框)
+      var clusterIds = [];
+      dkeys.forEach(function (dk, ci) {
+        var subId = pg.id + "#" + ci;
+        var mem = byDepth[dk];
+        pairGroups[subId] = { id: subId, label: "", members: mem, noTitle: true };
+        mem.forEach(function (mid) { pairGroupMap[mid] = subId; });
+        clusterIds.push(subId);
+      });
+      crossPairs.push({ pg: pg, clusterIds: clusterIds });
+    });
+
+    // 跨列对偶的"输出合并短接线": 每簇直接下游 (排除同组成员) ≥2 个时, 簇输出端相连
+    var pairLinks = [];
+    crossPairs.forEach(function (cp) {
+      var need = [];
+      cp.clusterIds.forEach(function (sid) {
+        var mem = pairGroups[sid].members;
+        var memSet = {};
+        mem.forEach(function (m) { memSet[m] = 1; });
+        var downs = {};
+        mem.forEach(function (m) {
+          graph.powerOutEdges(m).forEach(function (e) {
+            if (!memSet[e.to] && !hiddenNodeIds.has(e.to) && !nodeToCollapsed[e.to]) downs[e.to] = 1;
+          });
+        });
+        if (Object.keys(downs).length >= 2) need.push(sid);
+      });
+      // 成员节点 id (渲染端合并点用)
+      for (var li = 0; li + 1 < need.length; li++) {
+        pairLinks.push({
+          id: cp.pg.id + "_" + li,
+          a: "__pair_" + need[li], b: "__pair_" + need[li + 1],
+          am: pairGroups[need[li]].members, bm: pairGroups[need[li + 1]].members
+        });
+      }
     });
 
     // 节点 → elk 子节点
@@ -702,7 +1037,8 @@
             edges: [],
             labels: [{ text: pairGroups[pid].label }],
             __isPair: true,
-            __pairId: pid
+            __pairId: pid,
+            __noTitle: !!pairGroups[pid].noTitle
           };
         }
         pairElkMap[pid].children.push(elkNode);
@@ -752,7 +1088,7 @@
       }
     });
 
-    // 边
+    // 边 (折叠重定向后两端相同的组内边 → 跳过, 避免折叠态自环乱线)
     graph.edges.forEach(function (e) {
       if (e.type === "control" && !showControl) return;
       var fromElk = nodeElkMap[e.from];
@@ -765,6 +1101,7 @@
         toElk = nodeElkMap["__collapsed_" + nodeToCollapsed[e.to]];
       }
       if (!fromElk || !toElk) return;
+      if (fromElk.id === toElk.id) return;   // 折叠后两端同一聚合节点: 组内边不画
 
       root.edges.push({
         id: e.id,
@@ -774,6 +1111,8 @@
       });
     });
 
+    root.__depths = powerDepth;      // 层间距通道数用
+    root.__pairLinks = pairLinks;    // 跨列对偶输出合并短接线
     return root;
   }
 
