@@ -107,5 +107,3 @@ body.pt-theme-dark .pt-json-view { background: #0d0d0d; }
 body.pt-theme-dark .pt-node-title { fill: #e0e0e0; }
 body.pt-theme-dark .pt-node-sub { fill: #9e9e9e; }
 body.pt-theme-dark text { fill: #e0e0e0; }
-/* 跨越弧遮蔽色 = 深色画布底色 */
-body.pt-theme-dark .pt-edge-hop-mask { stroke: #121212; }

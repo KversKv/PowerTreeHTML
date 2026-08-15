@@ -96,9 +96,9 @@
     var GROUP_PAD = { t: 48, l: 16, r: 16, b: 16 };  // 分组内边距 (同 layoutOpts.groupOptions)
     var ROOT_PAD = 24;
     var BASE_GAP = 56;     // 最小层间水平间距
-    var LANE_GAP = 12;     // 平行竖直干线最小间距
+    var LANE_GAP = 14;     // 平行竖直干线最小间距
     var GAP_MARGIN = 60;   // 层间距余量 (= 节点 CLR*2 + 分组 padding 等)
-    var PORT_STEP = 12;    // 同节点多路入/出端口的纵向间距
+    var PORT_STEP = 16;    // 同节点多路入/出端口的纵向间距 (多路分支水平线不挤成一片)
     var PORT_MARGIN = 10;  // 端口距节点上下缘的最小距离
     var BAND_CLR = 8;      // 跨列水平空隙带与模块的安全间距
     var CLR = 14;          // 走线与节点的安全间距
@@ -320,6 +320,25 @@
         xCursor += wMax + (gapOf[l] != null ? gapOf[l] : BASE_GAP);
       });
 
+      // 源节点 (VSYS 等) 纵向居中: 移到其"直接下游 (lift 到本容器) " y 范围的中心,
+      // 让总线干线从源中心向上下均匀分叉, 而不是从最顶端单向往下。
+      children.forEach(function (c) {
+        var cn = c.__node;
+        if (!cn || cn.type !== "source") return;
+        var downYs = [];
+        edges.forEach(function (e) {
+          if (e.__edge && e.__edge.type === "control") return;
+          var s = liftTo(e.sources && e.sources[0], childSet);
+          if (s !== c.id) return;
+          var t = liftTo(e.targets && e.targets[0], childSet);
+          var tn = t && nodeById[t];
+          if (tn) downYs.push(tn.y + (tn.height || 0) / 2);
+        });
+        if (!downYs.length) return;
+        var lo = Math.min.apply(null, downYs), hi = Math.max.apply(null, downYs);
+        c.y = (lo + hi) / 2 - (c.height || 0) / 2;
+      });
+
       // 容器尺寸 = 内容 bbox + 内边距
       var bbW = 0, bbH = 0;
       children.forEach(function (c) {
@@ -444,7 +463,9 @@
       return sg;
     }
 
-    // 3) 总线检测: 同一源节点、同 net、向右扇出 ≥3 → 一条竖直干线 + 各目标水平分支
+    // 3) 总线检测: 同一源节点、向右扇出 ≥3 → 一条竖直干线 + 各目标水平分支。
+    //    不按 net 细分 —— 同一源 (如 VSYS) 只产生 1 条干线, 分支横向到各目标,
+    //    分支上的 Vin 标签仍按各自 net (VSYS / vdd_l14_15 / vdd_l5) 区分。
     var bySrc = {};
     edges.forEach(function (e) {
       var s = resolveAbs(e.sources && e.sources[0]);
@@ -457,35 +478,25 @@
     });
 
     Object.keys(bySrc).forEach(function (srcId) {
-      var list = bySrc[srcId];
-      // 按 net 细分: 只有同 net 的扇出才合并成总线
-      var byNet = {};
-      list.forEach(function (r) {
-        if (!r.forward || r.isControl) return;
-        var nk = netOf(r.e);
-        (byNet[nk] = byNet[nk] || []).push(r);
-      });
-      Object.keys(byNet).forEach(function (nk) {
-        var fwd = byNet[nk];
-        if (fwd.length < BUS_SRC_MIN) return;
-        var s = fwd[0].s;
-        var sr = runOf(s);
-        // 成员目标必须都在紧邻右列, 否则退出总线单独走线
-        var members = fwd.filter(function (r) { return sr >= 0 && runOf(r.t) === sr + 1; });
-        if (members.length < BUS_SRC_MIN) return;
-        members.sort(function (a, b) { return (a.t.y + a.t.h / 2) - (b.t.y + b.t.h / 2); });
-        var rec = {
-          kind: "bus", net: nk, s: s,
-          sx: s.x + s.w, sy: s.y + s.h / 2,
-          members: members
-        };
-        members.forEach(function (m) { busEdgeIds[m.e.id] = 1; });
-        var ys = members.map(function (m) { return m.t.y + m.t.h / 2; });
-        ys.push(rec.sy);
-        // 总线干线贴源列 (L): 各目标分支水平段拉长到目标, Vin 标签放在分支线上方不溢出
-        rec.trunkSeg = addSeg(sr, nk, Math.min.apply(null, ys), Math.max.apply(null, ys), "bus", rec, "L");
-        recs.push(rec);
-      });
+      var list = bySrc[srcId].filter(function (r) { return r.forward && !r.isControl; });
+      if (list.length < BUS_SRC_MIN) return;
+      var s = list[0].s;
+      var sr = runOf(s);
+      // 成员目标必须都在紧邻右列, 否则退出总线单独走线
+      var members = list.filter(function (r) { return sr >= 0 && runOf(r.t) === sr + 1; });
+      if (members.length < BUS_SRC_MIN) return;
+      members.sort(function (a, b) { return (a.t.y + a.t.h / 2) - (b.t.y + b.t.h / 2); });
+      var rec = {
+        kind: "bus", net: "__bus_" + srcId, s: s,   // 干线按源聚类, net 仅作车道 key
+        sx: s.x + s.w, sy: s.y + s.h / 2,
+        members: members
+      };
+      members.forEach(function (m) { busEdgeIds[m.e.id] = 1; });
+      var ys = members.map(function (m) { return m.t.y + m.t.h / 2; });
+      ys.push(rec.sy);
+      // 总线干线贴源列 (L): 各目标分支水平段拉长到目标, Vin 标签放在分支线上方不溢出
+      rec.trunkSeg = addSeg(sr, rec.net, Math.min.apply(null, ys), Math.max.apply(null, ys), "bus", rec, "L");
+      recs.push(rec);
     });
 
     // 4) 端口分配: 同节点的多路入边/出边沿边缘纵向分散 (按对端 y 排序减少交叉)。
@@ -561,16 +572,22 @@
       var bot = merged.length ? merged[merged.length - 1][1] + 40 : Math.max(rec.sy, rec.ty) + 40;
       var cands = [];
       if (merged.length) cands.push((rec.sy + rec.ty) / 2);
-      for (var yi = Math.floor(top / 4) * 4; yi <= bot; yi += 4) cands.push(yi);
+      for (var yi = Math.floor(top / 8) * 8; yi <= bot; yi += 8) cands.push(yi);
       var lo2 = Math.min(g1, g2), hi2 = Math.max(g1, g2);
+      // 跨列水平带的最小纵向间距: 异网带之间保持 MIN_BAND_GAP, 避免多条横线挤成一片
+      var MIN_BAND_GAP = 14;
       var bands = cands.filter(function (yc) {
         var ok = !merged.some(function (iv) { return yc > iv[0] && yc < iv[1]; });
         if (!ok) return false;
-        // 异网同水平带且 x 区间重叠时跳过 (同 net 可复用)
-        var spans = bandUsed[Math.round(yc)] || [];
-        return !spans.some(function (sp) {
-          return sp.net !== rec.net && sp.x1 < hi2 - 6 && sp.x2 > lo2 + 6;
+        // 遍历所有已用带 (不限同桶): 异网且 x 区间重叠时, 纵向距离必须 ≥ MIN_BAND_GAP
+        var conflict = Object.keys(bandUsed).some(function (bk) {
+          var by = Number(bk);
+          if (Math.abs(by - yc) >= MIN_BAND_GAP) return false;   // 够远不冲突
+          return bandUsed[bk].some(function (sp) {
+            return sp.net !== rec.net && sp.x1 < hi2 - 6 && sp.x2 > lo2 + 6;
+          });
         });
+        return !conflict;
       });
       // 优先"源水平短"的带, 其次总行程短
       bands.sort(function (a, b) {
@@ -821,9 +838,12 @@
       if (rec.e && rec.e.__edge && rec.e.__edge.type === "control") return;  // 控制虚线不参与跳线
       if (rec.kind === "bus") {
         var bx = rec.trunkSeg.x;
-        var first = rec.members[0];
-        pushSeg(first.e.__edge, rec.net, rec.sx, rec.sy, bx, rec.sy);               // 源短接
-        pushSeg(first.e.__edge, rec.net, bx, rec.trunkSeg.y1, bx, rec.trunkSeg.y2); // 总线干线
+        // 源短接/干线用独立伪 holder (不属于任何单一分支边),
+        // 跳弧挂它并按 (x,y) 断开自己的段, 避免错挂到 first 成员边导致 hop 与分支段 y 错位
+        var trunkHolder = { __busHops: null };
+        rec.trunkHolder = trunkHolder;
+        pushSeg(trunkHolder, rec.net, rec.sx, rec.sy, bx, rec.sy);               // 源短接
+        pushSeg(trunkHolder, rec.net, bx, rec.trunkSeg.y1, bx, rec.trunkSeg.y2); // 总线干线
         rec.members.forEach(function (m) {
           var ty2 = portY(m.e, m.t, "ty");
           pushSeg(m.e.__edge, rec.net, bx, ty2, m.t.x, ty2);                        // 分支
@@ -870,6 +890,14 @@
         if (!dup) A.holder.__hops.push(hp);
       }
     }
+    // 总线干线/源短接的跳弧: 从伪 holder 转存到首条成员边的 __bus.hops (渲染器画干线时断开)
+    recs.forEach(function (rec) {
+      if (rec.kind !== "bus" || !rec.trunkHolder || !rec.trunkHolder.__hops) return;
+      var first = rec.members[0];
+      if (first && first.e.__edge && first.e.__edge.__bus) {
+        first.e.__edge.__bus.hops = rec.trunkHolder.__hops;
+      }
+    });
 
     return elkGraph;
   }

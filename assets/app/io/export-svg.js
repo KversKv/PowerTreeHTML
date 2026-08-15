@@ -21,7 +21,6 @@
       .pt-node-sub { font-family: system-ui, sans-serif; }
       text { font-family: system-ui, sans-serif; }
       .pt-edge { fill: none; }
-      .pt-edge-hop-mask { stroke: #ffffff; }
       .pt-edge-hit { display: none; }
       .pt-pair-link { stroke-dasharray: 6,3; opacity: 0.9; }
       .pt-pair-link-dot { stroke: #fff; stroke-width: 1; }

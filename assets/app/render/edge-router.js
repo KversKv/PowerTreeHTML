@@ -56,6 +56,52 @@
     return d;
   }
 
+  var HOP_RX = 4.5;   // 跳线拱半宽 (与 renderEdgeDecor 的拱一致)
+
+  /**
+   * 在 path 的跳线位置断开水平段: 每个 hop 挖掉 [hp.x-RX, hp.x+RX] 区间,
+   * 让拱替代该段水平线 (拱在 decor 里画), 避免"拱 + 底部直线"重叠。
+   * 仅处理水平段 (y 相同); 返回拆分后的 path。
+   */
+  function breakPathAtHops(sections, hops) {
+    if (!hops || !hops.length) return sectionsToPath(sections);
+    var d = "";
+    sections.forEach(function (sec) {
+      var pts = [];
+      if (sec.startPoint) pts.push(sec.startPoint);
+      if (Array.isArray(sec.bendPoints)) pts = pts.concat(sec.bendPoints);
+      if (sec.endPoint) pts.push(sec.endPoint);
+      if (pts.length < 2) return;
+      // 把每个水平段按 hop 切成若干子段
+      var out = [];   // [ [x1,y1,x2,y2], ... ] 保留的线段
+      for (var i = 0; i < pts.length - 1; i++) {
+        var a = pts[i], b = pts[i + 1];
+        if (a.y !== b.y) { out.push([a.x, a.y, b.x, b.y]); continue; }  // 竖段原样
+        var y = a.y, x1 = Math.min(a.x, b.x), x2 = Math.max(a.x, b.x);
+        // 收集落在本段上的 hop, 按 x 排序后挖区间
+        var cuts = [];
+        hops.forEach(function (hp) {
+          if (hp.y !== y) return;
+          if (hp.x > x1 && hp.x < x2) cuts.push(hp.x);
+        });
+        if (!cuts.length) { out.push([x1, y, x2, y]); continue; }
+        cuts.sort(function (p, q) { return p - q; });
+        var cur = x1;
+        cuts.forEach(function (cx) {
+          out.push([cur, y, cx - HOP_RX, y]);   // 左半
+          cur = cx + HOP_RX;                     // 跳过拱区间
+        });
+        out.push([cur, y, x2, y]);               // 右半
+      }
+      // 过滤零长段, 生成 path
+      out.forEach(function (sg) {
+        if (Math.abs(sg[2] - sg[0]) < 0.5 && Math.abs(sg[3] - sg[1]) < 0.5) return;
+        d += "M " + sg[0] + " " + sg[1] + " L " + sg[2] + " " + sg[3];
+      });
+    });
+    return d;
+  }
+
   /**
    * 绘制一条边
    * @param {SVGGElement} g
@@ -63,10 +109,30 @@
    * @param {Array} sections ELK 布局段
    * @param {object} ctx { showLabel, currentMa, faded }
    */
-  /** 把 sections 转成 path, branchOnly=true 时跳过竖直段 (由共享干线承载者画) */
-  function sectionsToPathBranch(sections, branchOnly) {
+  /** 把 sections 转成 path, branchOnly=true 时跳过竖直段 (由共享干线承载者画);
+   *  hops 提供时, 水平段在跳线位置断开 (拱替代该段) */
+  function sectionsToPathBranch(sections, branchOnly, hops) {
     if (!sections || !sections.length) return "";
     var d = "";
+    // 单条水平段按 hops 断开成若干子段
+    function segWithHops(x1, y, x2) {
+      var out = "";
+      if (y == null || x1 === x2) return out;
+      var lo = Math.min(x1, x2), hi = Math.max(x1, x2);
+      var cuts = [];
+      (hops || []).forEach(function (hp) {
+        if (hp.y === y && hp.x > lo && hp.x < hi) cuts.push(hp.x);
+      });
+      if (!cuts.length) return " M " + x1 + " " + y + " L " + x2 + " " + y;
+      cuts.sort(function (p, q) { return p - q; });
+      var cur = lo;
+      cuts.forEach(function (cx) {
+        if (cx - HOP_RX > cur) out += " M " + cur + " " + y + " L " + (cx - HOP_RX) + " " + y;
+        cur = cx + HOP_RX;
+      });
+      if (hi > cur) out += " M " + cur + " " + y + " L " + hi + " " + y;
+      return out;
+    }
     sections.forEach(function (sec) {
       var pts = [];
       if (sec.startPoint) pts.push(sec.startPoint);
@@ -80,9 +146,9 @@
       }
       // branchOnly: 源水平段 (pts[0]→pts[1]) 与 目标水平段 (倒数第2→末点), 竖直段跳过
       if (pts.length >= 2) {
-        d += "M " + pts[0].x + " " + pts[0].y + " L " + pts[1].x + " " + pts[1].y;
+        d += segWithHops(pts[0].x, pts[0].y, pts[1].x);
         var n = pts.length;
-        d += " M " + pts[n - 2].x + " " + pts[n - 2].y + " L " + pts[n - 1].x + " " + pts[n - 1].y;
+        d += segWithHops(pts[n - 2].x, pts[n - 2].y, pts[n - 1].x);
       }
     });
     return d;
@@ -121,7 +187,10 @@
   function renderEdge(g, edge, sections, ctx) {
     ctx = ctx || {};
     var branchOnly = sections && sections[0] && sections[0].__branchOnly;
-    var d = branchOnly ? sectionsToPathBranch(sections, true) : sectionsToPath(sections);
+    // 有跳线的边: 水平段在拱位置断开 (拱替代该段), 否则整线连续 (branchOnly 分支同样断开)
+    var d = branchOnly ? sectionsToPathBranch(sections, true, edge.__hops)
+                       : (edge.__hops && edge.__hops.length ? breakPathAtHops(sections, edge.__hops)
+                                                            : sectionsToPath(sections));
     if (!d) return null;
 
     var isControl = edge.type === "control";
@@ -156,8 +225,13 @@
     // 总线干线: 同源扇出的首条边负责画 "源→竖直干线" (只做一次)
     if (edge.__bus && edge.__bus.first) {
       var b = edge.__bus;
-      var busD = "M " + b.sx + " " + b.sy +
-                 " L " + b.busX + " " + b.sy +
+      // 源短接水平段按 __bus.hops 在跳线位置断开 (拱替代该段)
+      var srcSeg = { startPoint: { x: b.sx, y: b.sy }, bendPoints: [], endPoint: { x: b.busX, y: b.sy } };
+      var srcD = (b.hops && b.hops.length)
+        ? breakPathAtHops([srcSeg], b.hops)
+        : ("M " + b.sx + " " + b.sy + " L " + b.busX + " " + b.sy);
+      var busD = srcD +
+                 " M " + b.busX + " " + b.sy +
                  " L " + b.busX + " " + b.busY1 +
                  " M " + b.busX + " " + b.sy +
                  " L " + b.busX + " " + b.busY2;
@@ -246,7 +320,8 @@
   function renderPairLink(g, link, ctx) {
     ctx = ctx || {};
     if (!link.sections || !link.sections[0]) return;
-    var d = sectionsToPath(link.sections);
+    var d = (link.__hops && link.__hops.length) ? breakPathAtHops(link.sections, link.__hops)
+                                               : sectionsToPath(link.sections);
     if (!d) return;
     _el("path", {
       d: d, fill: "none", stroke: "#7e57c2", "stroke-width": 2,
@@ -264,16 +339,13 @@
         fill: "#7e57c2", "class": "pt-pair-link-dot"
       }, g);
     });
-    // 跨越弧 (异网交叉时, 布局阶段已写入 link.__hops)
+    // 跨越弧 (异网交叉时, 布局阶段已写入 link.__hops): 同 renderEdgeDecor, 透明底只画弧
     (link.__hops || []).forEach(function (hp) {
       var hg = _el("g", { "class": "pt-edge-hop" }, g);
-      _el("line", {
-        x1: hp.x - 5.5, y1: hp.y, x2: hp.x + 5.5, y2: hp.y,
-        stroke: "#fafafa", "stroke-width": 4, "class": "pt-edge-hop-mask"
-      }, hg);
+      var R = HOP_RX;
       _el("path", {
-        d: "M " + (hp.x - 5) + " " + hp.y + " A 5 5 0 0 1 " + (hp.x + 5) + " " + hp.y,
-        fill: "none", stroke: "#7e57c2", "stroke-width": 1.6
+        d: "M " + (hp.x - R) + " " + hp.y + " A " + R + " " + R + " 0 0 1 " + (hp.x + R) + " " + hp.y,
+        fill: "none", stroke: "#7e57c2", "stroke-width": 1.4, "stroke-linecap": "round"
       }, hg);
     });
   }
@@ -314,17 +386,18 @@
       }, g);
     });
 
-    // 跨越弧 (不相连): 白色遮蔽被跨线 + 上半圆拱
-    (edge.__hops || []).forEach(function (hp) {
+    // 跨越弧 (不相连): 只画半圆拱, 不加背景遮蔽 —— 透明底, 弧线本身即跨线符号。
+    // 普通跳线 edge.__hops + 总线干线/源短接跳线 edge.__bus.hops
+    var allHops = (edge.__hops || []).slice();
+    if (edge.__bus && edge.__bus.hops) allHops = allHops.concat(edge.__bus.hops);
+    allHops.forEach(function (hp) {
       var hg = _el("g", { "class": "pt-edge-hop", "data-edge-id": edge.id, opacity: op }, g);
-      _el("line", {
-        x1: hp.x - 5.5, y1: hp.y, x2: hp.x + 5.5, y2: hp.y,
-        stroke: "#fafafa",   // 内联兜底 (PNG 导出无 CSS); 浏览器中由主题类覆盖
-        "stroke-width": strokeW + 3, "class": "pt-edge-hop-mask"
-      }, hg);
+      // 小巧半圆拱: 半宽 HOP_RX, 高度与半宽一致 (标准半圆, 不夸张)
+      var RX = HOP_RX, RY = HOP_RX;
       _el("path", {
-        d: "M " + (hp.x - 5) + " " + hp.y + " A 5 5 0 0 1 " + (hp.x + 5) + " " + hp.y,
-        fill: "none", stroke: color, "stroke-width": Math.max(strokeW, 1.6)
+        d: "M " + (hp.x - RX) + " " + hp.y + " A " + RX + " " + RY + " 0 0 1 " + (hp.x + RX) + " " + hp.y,
+        fill: "none", stroke: color, "stroke-width": Math.max(strokeW, 1.4),
+        "stroke-linecap": "round"
       }, hg);
     });
   }
