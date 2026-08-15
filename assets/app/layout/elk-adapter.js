@@ -415,12 +415,12 @@
     var recs = [];         // 全部走线记录
     var zones = {};        // runIdx -> {x1, x2, segs: []}
 
-    /** 登记一条竖直走线段 (参与车道分配; kind: bus/n=普通/x=跨列/link=对偶短接) */
-    function addSeg(runIdx, net, y1, y2, kind, rec) {
+    /** 登记一条竖直走线段 (参与车道分配; kind: bus/n=普通/x=跨列; side: L 贴源列 / R 贴目标列) */
+    function addSeg(runIdx, net, y1, y2, kind, rec, side) {
       var z = gapZone(runIdx);
       var key = String(runIdx);
       if (!zones[key]) zones[key] = { x1: z.x1, x2: z.x2, segs: [] };
-      var sg = { net: net, y1: Math.min(y1, y2), y2: Math.max(y1, y2), kind: kind, rec: rec, x: 0 };
+      var sg = { net: net, y1: Math.min(y1, y2), y2: Math.max(y1, y2), kind: kind, rec: rec, side: side || "R", x: 0 };
       zones[key].segs.push(sg);
       return sg;
     }
@@ -570,8 +570,8 @@
         spans.push({ x1: lo2, x2: hi2, net: rec.net });
         bandUsed[bk] = spans;
         rec.yc = yc;
-        rec.seg1 = addSeg(segRun1, rec.net, rec.sy, yc, "x", rec);
-        rec.seg2 = addSeg(segRun2, rec.net, yc, rec.ty, "x", rec);
+        rec.seg1 = addSeg(segRun1, rec.net, rec.sy, yc, "x", rec, "L");  // 贴源列: 源水平段极短
+        rec.seg2 = addSeg(segRun2, rec.net, yc, rec.ty, "x", rec, "R"); // 贴目标列: 目标水平段极短
         return true;
       }
       return false;
@@ -654,28 +654,39 @@
     });
     Object.keys(zones).forEach(function (zk) {
       var z = zones[zk];
-      var byNet = {}, order = [];
+      // 分两侧: L 侧 (贴源列, 跨列边 seg1) 从 x1 往右排; R 侧 (贴目标列, 普通/总线/seg2) 从 x2 往左排。
+      // 贴目标列的干线让目标水平分支极短 (跳弧集中在源短接, 每条边最多穿越一次干线区)。
+      var byNetL = {}, byNetR = {}, orderL = [], orderR = [];
       z.segs.forEach(function (sg) {
-        if (!byNet[sg.net]) { byNet[sg.net] = []; order.push(sg.net); }
-        byNet[sg.net].push(sg);
+        var m = sg.side === "L" ? byNetL : byNetR;
+        var ord = sg.side === "L" ? orderL : orderR;
+        if (!m[sg.net]) { m[sg.net] = []; ord.push(sg.net); }
+        m[sg.net].push(sg);
       });
-      order.sort(function (a, b) {
-        function mid(nk) {
-          var arr = byNet[nk], sum = 0;
-          arr.forEach(function (sg) { sum += (sg.y1 + sg.y2) / 2; });
-          return sum / arr.length;
-        }
-        return mid(a) - mid(b);
-      });
-      var n = order.length;
-      if (!n) return;
-      var spacing = n > 1 ? Math.min(LANE_GAP, (z.x2 - z.x1) / n) : 0;
+      function sortByY(byNet, order) {
+        order.sort(function (a, b) {
+          function mid(nk) {
+            var arr = byNet[nk], sum = 0;
+            arr.forEach(function (sg) { sum += (sg.y1 + sg.y2) / 2; });
+            return sum / arr.length;
+          }
+          return mid(a) - mid(b);
+        });
+      }
+      sortByY(byNetL, orderL);
+      sortByY(byNetR, orderR);
+      var nL = orderL.length, nR = orderR.length;
+      if (!nL && !nR) return;
+      var avail = z.x2 - z.x1;
+      var spacing = Math.min(LANE_GAP, avail / Math.max(1, nL + nR));
       spacing = Math.max(6, spacing);
-      var startX = (z.x1 + z.x2) / 2 - spacing * (n - 1) / 2;
-      order.forEach(function (nk, i) {
-        var x = n === 1 ? (z.x1 + z.x2) / 2 : startX + i * spacing;
-        x = Math.max(z.x1, Math.min(z.x2, x));
-        byNet[nk].forEach(function (sg) { sg.x = x; });
+      orderL.forEach(function (nk, i) {
+        var x = Math.min(z.x2, z.x1 + i * spacing);
+        byNetL[nk].forEach(function (sg) { sg.x = x; });
+      });
+      orderR.forEach(function (nk, i) {
+        var x = Math.max(z.x1, z.x2 - i * spacing);
+        byNetR[nk].forEach(function (sg) { sg.x = x; });
       });
     });
 
