@@ -296,6 +296,12 @@ html, body {
   border-bottom: 1px solid #e0e0e0;
 }
 
+/* 属性面板隐藏时, 问题清单占满侧栏 */
+.pt-sidebar.pt-detail-hidden .pt-issues-panel {
+  flex: 1;
+  height: auto;
+}
+
 .pt-detail-empty {
   padding: 40px 20px;
   text-align: center;

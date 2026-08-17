@@ -29,6 +29,7 @@
     this._boxSelectState = null;
     this.selectedNodeIds = new Set();
     this.highlightNodeIds = null;   // null=不高亮; Set=高亮这些
+    this.effectiveSelectedNodeIds = null;  // 选中节点 + 对偶组成员 (边高亮判定用)
     this.fadedNodeIds = null;
     this.selectedEdgeId = null;        // 选中的边 id
     this.highlightEdgeIds = null;      // Set=高亮这些边 (同 net/signal 追踪)
@@ -433,7 +434,9 @@
         var fromIn = self.highlightNodeIds.has(edge.from);
         var toIn = self.highlightNodeIds.has(edge.to);
         faded = !(fromIn && toIn);
-        highlight = fromIn && toIn && (self.selectedNodeIds.has(edge.from) || self.selectedNodeIds.has(edge.to));
+        // 有效选中 = 选中节点 + 对偶组成员 (对偶输出短接, 成员 VOUT 共享)
+        var effSel = self.effectiveSelectedNodeIds || self.selectedNodeIds;
+        highlight = fromIn && toIn && (effSel.has(edge.from) || effSel.has(edge.to));
       }
       return { faded: faded, highlight: highlight };
     }
@@ -627,17 +630,37 @@
    */
   SvgRenderer.prototype.highlightPath = function (nodeId, defer) {
     if (!this.graph) return;
+    var self = this;
     // 与边选中互斥
     this.selectedEdgeId = null;
     this.highlightEdgeIds = null;
     this.highlightEdgeNodeIds = null;
     if (!nodeId) {
       this.highlightNodeIds = null;
+      this.effectiveSelectedNodeIds = null;
     } else {
       var ups = this.graph.powerAncestors(nodeId);
       var downs = this.graph.powerSubtree(nodeId);
       var set = new Set(ups.concat(downs));
+
+      // 对偶组成员: 输出短接, VOUT 共享 —— 选择任一成员时,
+      // 其他成员及其下游也应高亮 (如选 BUCK_01, LDO_01 的下游 SW1/SW7 也要亮)
+      var pairMembers = this.graph.pairMembersOf(nodeId);
+      pairMembers.forEach(function (mid) {
+        if (set.has(mid)) return;
+        set.add(mid);
+        var pairDowns = self.graph.powerSubtree(mid);
+        pairDowns.forEach(function (d) { set.add(d); });
+      });
       this.highlightNodeIds = set;
+
+      // 有效选中节点 = 选中节点 + 对偶组成员 (边高亮判定用)
+      // 对偶输出短接, 任一成员的 VOUT 边都应高亮
+      var effSel = new Set(this.selectedNodeIds);
+      this.selectedNodeIds.forEach(function (id) {
+        self.graph.pairMembersOf(id).forEach(function (mid) { effSel.add(mid); });
+      });
+      this.effectiveSelectedNodeIds = effSel;
     }
     // 立即重绘应用高亮
     if (!defer && this.layoutData) this.render(this.graph, this.layoutData, this.ctx);

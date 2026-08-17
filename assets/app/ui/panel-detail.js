@@ -24,7 +24,10 @@
 
   DetailPanel.prototype._build = function () {
     this.container.classList.add("pt-detail-panel");
-    this.container.innerHTML = "<div class='pt-detail-empty'>点击节点查看详情</div>";
+    // 初始无选中 → 隐藏 (refresh 会在 state:changed 时纠正)
+    this.container.style.display = "none";
+    var sidebar = this.container.parentNode;
+    if (sidebar) sidebar.classList.add("pt-detail-hidden");
   };
 
   function _section(title) {
@@ -49,10 +52,16 @@
     var id = PT.store.get("selectedNodeId");
     this.nodeId = id;
     var graph = PT.store.graph;
+    // 未选中模块时自动隐藏属性面板 (问题清单借 flex 布局自动占满侧栏)
+    var sidebar = this.container.parentNode;
     if (!id || !graph || !graph.node(id)) {
-      this.container.innerHTML = "<div class='pt-detail-empty'>点击节点查看详情</div>";
+      this.container.style.display = "none";
+      this.container.innerHTML = "";
+      if (sidebar) sidebar.classList.add("pt-detail-hidden");
       return;
     }
+    this.container.style.display = "";
+    if (sidebar) sidebar.classList.remove("pt-detail-hidden");
     var node = graph.node(id);
     var modeId = PT.store.get("mode");
     var statKey = PT.store.statKey();

@@ -25,9 +25,26 @@
 
   IssuesPanel.prototype.refresh = function () {
     var enabled = !!PT.store.get("issueCheckEnabled");
+    var hasSelection = !!PT.store.get("selectedNodeId");
     var issues = PT.store.issues || [];
     var counts = PT.rules.countByLevel(issues);
     var lang = PT.store.get("lang") || "zh";
+
+    // 未开启问题检测时, 整个面板隐藏 (不占空间), 由 #pt-detail 撑满侧栏
+    this.container.style.display = enabled ? "" : "none";
+    if (!enabled) {
+      this.header.innerHTML = "";
+      this.list.innerHTML = "";
+    }
+
+    // 整个右侧 sidebar: 仅在「选中节点」或「问题检测开启」时可见, 否则让出空间给左侧图
+    // (此处统一管理, 因 selectedNodeId 与 issueCheckEnabled 任一变化都会触发 refresh)
+    var sidebar = this.container.parentNode;
+    if (sidebar && sidebar.classList.contains("pt-sidebar")) {
+      sidebar.style.display = (enabled || hasSelection) ? "" : "none";
+    }
+
+    if (!enabled) return;
 
     this.header.innerHTML =
       "<span class='pt-issue-badge pt-issue-E'>E " + counts.E + "</span>" +
@@ -35,10 +52,6 @@
       "<span class='pt-issue-badge pt-issue-I'>I " + counts.I + "</span>";
 
     this.list.innerHTML = "";
-    if (!enabled) {
-      this.list.innerHTML = "<div class='pt-empty'>问题检测已关闭 (工具栏开启)</div>";
-      return;
-    }
     if (!issues.length) {
       this.list.innerHTML = "<div class='pt-empty'>无问题</div>";
       return;

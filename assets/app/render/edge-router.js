@@ -342,11 +342,18 @@
         var pts = [sec2.startPoint].concat(sec2.bendPoints || [], [sec2.endPoint]);
         var hp = pts[pts.length - 2], ep = pts[pts.length - 1];
         var midX = (hp.y === ep.y) ? (hp.x + ep.x) / 2 : (ep.x - 24);
+        var vAnchor = "middle";
+        // 总线干线贴目标列 (R 侧) 时分支极短: Vin 标签右对齐贴干线左侧,
+        // 向左延伸到源长线区, 避免压住目标模块 (根源总线 L 侧分支宽, 仍走中点)
+        if (edge.__bus && hp.y === ep.y && (ep.x - hp.x) < 40) {
+          midX = hp.x - 5;
+          vAnchor = "end";
+        }
         // 只显示 Vin 网络名 (不带电流, 避免杂乱; 电流 hover tooltip / 点击高亮可查)
         var vlabel = _el("text", {
           x: midX, y: ep.y - 5, "font-size": 9,
           fill: ctx.highlight ? "#e64a19" : "#37474f",
-          "text-anchor": "middle", "class": "pt-edge-vin-label", "data-edge-id": edge.id
+          "text-anchor": vAnchor, "class": "pt-edge-vin-label", "data-edge-id": edge.id
         }, g);
         vlabel.textContent = vinName;
       }

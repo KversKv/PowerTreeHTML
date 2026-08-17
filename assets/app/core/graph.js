@@ -234,6 +234,22 @@
     return this.nodeList().filter(function (n) { return n.parallel_group === groupId; });
   };
 
+  /**
+   * 对偶组成员: 返回 nodeId 所在对偶组的全部成员 (含自身)
+   * 对偶组 = BUCK/LDO 输出短接, 输出共享; 选择任一成员时, 其他成员的下游也应高亮
+   * @param {string} nodeId
+   * @returns {Array<string>} 同组全部成员 id; 不在对偶组时返回 []
+   */
+  Graph.prototype.pairMembersOf = function (nodeId) {
+    var members = [];
+    (this.data.pair_groups || []).forEach(function (pg) {
+      if (pg && pg.members && pg.members.indexOf(nodeId) >= 0) {
+        members = members.concat(pg.members);
+      }
+    });
+    return members;
+  };
+
   /** 级联链成员 (按 stage 升序) */
   Graph.prototype.cascadeChain = function (chainId) {
     if (!chainId) return [];

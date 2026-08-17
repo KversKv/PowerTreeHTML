@@ -96,9 +96,9 @@
     var GROUP_PAD = { t: 48, l: 16, r: 16, b: 16 };  // 分组内边距 (同 layoutOpts.groupOptions)
     var ROOT_PAD = 24;
     var BASE_GAP = 56;     // 最小层间水平间距
-    var LANE_GAP = 14;     // 平行竖直干线最小间距
+    var LANE_GAP = 12;     // 平行竖直干线最小间距
     var GAP_MARGIN = 60;   // 层间距余量 (= 节点 CLR*2 + 分组 padding 等)
-    var PORT_STEP = 16;    // 同节点多路入/出端口的纵向间距 (多路分支水平线不挤成一片)
+    var PORT_STEP = 12;    // 同节点多路入/出端口的纵向间距
     var PORT_MARGIN = 10;  // 端口距节点上下缘的最小距离
     var BAND_CLR = 8;      // 跨列水平空隙带与模块的安全间距
     var CLR = 14;          // 走线与节点的安全间距
@@ -281,9 +281,8 @@
         var list = layers[l].slice();
 
         if (li === 0) {
-          // 第一层: 把"有直接下游扇出"的节点与其下挂在纵向上靠近 ——
-          // 这里按声明顺序即可, 但把扇出多的往前提, 让后续层对齐更稳
-          list.sort(function (a, b) { return downMap[b.id].length - downMap[a.id].length; });
+          // 第一层: 按声明顺序放置 —— 数据声明 (BUCK_01&LDO_01, BUCK_02&LDO_02, ...,
+          // BUCK_04, BUCK_05, BUCK_06) 即期望的从上到下纵向顺序
         } else if (prevCenters) {
           // 后续层: 按"上游在上一层的 y 中心"重心排序, 减少交叉
           var bary = {};
@@ -306,8 +305,8 @@
 
         var wMax = 0;
         list.forEach(function (c) { if ((c.width || 0) > wMax) wMax = c.width; });
-        var y = pad.t;
         var centers = {};
+        var y = pad.t;
         list.forEach(function (c) {
           // 同层节点按"中心对齐"放置 (而非左对齐): 混合宽度时边缘不齐更整齐,
           // 第一级 buck/ldo/load_switch 宽度不同, 中心对齐后入线端口 x 一致
@@ -469,7 +468,6 @@
       return (ge && ge.net) || ("__nonet_" + e.id);
     }
 
-    var BUS_SRC_MIN = 3;   // 同源同 net 扇出达到该数才合并成总线
     var busEdgeIds = {};   // 被总线接管的边 id
     var recs = [];         // 全部走线记录
     var zones = {};        // runIdx -> {x1, x2, segs: []}
@@ -484,9 +482,10 @@
       return sg;
     }
 
-    // 3) 总线检测: 同一源节点、向右扇出 ≥3 → 一条竖直干线 + 各目标水平分支。
-    //    不按 net 细分 —— 同一源 (如 VSYS) 只产生 1 条干线, 分支横向到各目标,
-    //    分支上的 Vin 标签仍按各自 net (VSYS / vdd_l14_15 / vdd_l5) 区分。
+    // 3) 总线检测: 同一源节点、向右扇出 ≥2 → 一条竖直干线 + 各目标水平分支。
+    //    不按 net 细分 —— 同一源 (如 VSYS / LDO_13 / 对偶整体) 只产生 1 条干线,
+    //    分支横向到各目标, 分支上的 Vin 标签仍按各自 net (VSYS / vdd_l14_15 / vdd_l5) 区分。
+    var BUS_MIN = 2;   // 同源扇出 ≥2 即汇成母线 (LDO_13→SW5/SW6 也由母线单线分岔)
     var bySrc = {};
     edges.forEach(function (e) {
       var s = effSrcRect(e.sources && e.sources[0]);   // 对偶成员 → pair 整体
@@ -500,12 +499,12 @@
 
     Object.keys(bySrc).forEach(function (srcId) {
       var list = bySrc[srcId].filter(function (r) { return r.forward && !r.isControl; });
-      if (list.length < BUS_SRC_MIN) return;
+      if (list.length < BUS_MIN) return;
       var s = list[0].s;
       var sr = runOf(s);
       // 成员目标必须都在紧邻右列, 否则退出总线单独走线
       var members = list.filter(function (r) { return sr >= 0 && runOf(r.t) === sr + 1; });
-      if (members.length < BUS_SRC_MIN) return;
+      if (members.length < BUS_MIN) return;
       members.sort(function (a, b) { return (a.t.y + a.t.h / 2) - (b.t.y + b.t.h / 2); });
       var rec = {
         kind: "bus", net: "__bus_" + srcId, s: s,   // 干线按源聚类, net 仅作车道 key
@@ -515,8 +514,18 @@
       members.forEach(function (m) { busEdgeIds[m.e.id] = 1; });
       var ys = members.map(function (m) { return m.t.y + m.t.h / 2; });
       ys.push(rec.sy);
-      // 总线干线贴源列 (L): 各目标分支水平段拉长到目标, Vin 标签放在分支线上方不溢出
-      rec.trunkSeg = addSeg(sr, rec.net, Math.min.apply(null, ys), Math.max.apply(null, ys), "bus", rec, "L");
+      // 总线干线贴列: 根源 (VSYS 等 source 类型) 贴源列 (L) —— 分支拉长放 Vin 标签;
+      // 非根源 (对偶轨 / 单模块源 / 级联源) 贴目标列 (R) —— 源→干线为一根长线, 到目标附近再分岔
+      // (避免在源处即分岔, 跳线集中在源长线上, 每条边最多穿越一次干线区)
+      var busSrcNode = nodeById[list[0].e.sources[0]];
+      var busSide = (busSrcNode && busSrcNode.__node && busSrcNode.__node.type === "source") ? "L" : "R";
+      rec.trunkSeg = addSeg(sr, rec.net, Math.min.apply(null, ys), Math.max.apply(null, ys), "bus", rec, busSide);
+      if (typeof console !== "undefined") {
+        console.log("[PT-debug] BUS triggered: src=" + srcId + " side=" + busSide +
+          " members=" + members.map(function (m) { return m.e.id; }).join(",") +
+          " sx=" + Math.round(rec.sx) + " sy=" + Math.round(rec.sy) +
+          " trunkY=[" + Math.round(rec.trunkSeg.y1) + "," + Math.round(rec.trunkSeg.y2) + "]");
+      }
       recs.push(rec);
     });
 
@@ -594,23 +603,27 @@
       var bot = merged.length ? merged[merged.length - 1][1] + 40 : Math.max(rec.sy, rec.ty) + 40;
       var cands = [];
       if (merged.length) cands.push((rec.sy + rec.ty) / 2);
-      for (var yi = Math.floor(top / 8) * 8; yi <= bot; yi += 8) cands.push(yi);
+      for (var yi = Math.floor(top / 4) * 4; yi <= bot; yi += 4) cands.push(yi);
       var lo2 = Math.min(g1, g2), hi2 = Math.max(g1, g2);
-      // 跨列水平带的最小纵向间距: 异网带之间保持 MIN_BAND_GAP, 避免多条横线挤成一片
-      var MIN_BAND_GAP = 14;
-      var bands = cands.filter(function (yc) {
-        var ok = !merged.some(function (iv) { return yc > iv[0] && yc < iv[1]; });
-        if (!ok) return false;
-        // 遍历所有已用带 (不限同桶): 异网且 x 区间重叠时, 纵向距离必须 ≥ MIN_BAND_GAP
-        var conflict = Object.keys(bandUsed).some(function (bk) {
-          var by = Number(bk);
-          if (Math.abs(by - yc) >= MIN_BAND_GAP) return false;   // 够远不冲突
-          return bandUsed[bk].some(function (sp) {
-            return sp.net !== rec.net && sp.x1 < hi2 - 6 && sp.x2 > lo2 + 6;
+      // 跨列水平带的最小纵向间距: 异网带之间保持 MIN_BAND_GAP, 避免多条横线挤成一片。
+      // 若过滤后无候选, 逐步放宽 (降级), 绝不落到"穿模块"的兜底。
+      function pickBands(minGap) {
+        return cands.filter(function (yc) {
+          var ok = !merged.some(function (iv) { return yc > iv[0] && yc < iv[1]; });
+          if (!ok) return false;
+          var conflict = Object.keys(bandUsed).some(function (bk) {
+            var by = Number(bk);
+            if (Math.abs(by - yc) >= minGap) return false;   // 够远不冲突
+            return bandUsed[bk].some(function (sp) {
+              return sp.net !== rec.net && sp.x1 < hi2 - 6 && sp.x2 > lo2 + 6;
+            });
           });
+          return !conflict;
         });
-        return !conflict;
-      });
+      }
+      var bands = pickBands(12);
+      if (!bands.length) bands = pickBands(8);
+      if (!bands.length) bands = pickBands(0);   // 兜底: 仅避模块, 不限间距 (保证不穿模块)
       // 优先"源水平短"的带, 其次总行程短
       bands.sort(function (a, b) {
         var ca = Math.abs(a - rec.sy) * 1.5 + Math.abs(a - rec.ty);
@@ -639,16 +652,22 @@
     // 6) 普通边路由: 相邻列 H-V-H; 跨列 power 走空隙带; 后向/同列/控制边简单绕行
     edges.forEach(function (e) {
       if (busEdgeIds[e.id]) return;
-      var s = effSrcRect(e.sources && e.sources[0]);   // 对偶成员 → pair 整体
+      var srcId = e.sources && e.sources[0];
+      var sRaw = resolveAbs(srcId);                    // 实际源节点 (对偶成员本身)
+      var s = effSrcRect(srcId);                        // 对偶成员 → pair 整体 (用于列判断)
       var t = resolveAbs(e.targets && e.targets[0]);
       if (!s || !t) return;
       var isCtl = e.__edge && e.__edge.type === "control";
+      var sr = runOf(s), tr = runOf(t);
+      // 跨列边源端用实际节点 (对偶成员不提升到 pair), 避免与总线源短接前半段完全重合
+      // (BUCK_01→SOC_CORE 跨列边与 LDO_01→SW1/SW7 总线源短接都从 PAIR_01 右缘中心出发, 前半段画两遍且无 T 型圆点, 视觉混乱; 跨列边改从 BUCK_01 右缘中心出发, 两条线分离清晰)
+      var isCross = (sr >= 0 && tr >= 0 && Math.abs(tr - sr) > 1);
+      var sUse = isCross ? sRaw : s;
       var rec = {
-          e: e, s: s, t: t, net: netOf(e),
-          sx: s.x + s.w, sy: portY(e, s, "sy"),
+          e: e, s: sUse, t: t, net: netOf(e),
+          sx: sUse.x + sUse.w, sy: portY(e, sUse, "sy"),
           tx: t.x, ty: portY(e, t, "ty")
         };
-        var sr = runOf(s), tr = runOf(t);
         if (sr >= 0 && tr === sr + 1) {
           rec.kind = "n";
           // 第一级入边 (源 depth=0): 干线贴源列 (L), 末段水平留宽放 Vin 标签
@@ -740,6 +759,7 @@
       if (!nL && !nR) return;
       var avail = z.x2 - z.x1;
       var spacing = Math.min(LANE_GAP, avail / Math.max(1, nL + nR));
+      // 异网竖直干线最小间距: 不过度收紧 (≥8), 避免 LDO_x 的 VIN/VOUT 干线贴在一起
       spacing = Math.max(6, spacing);
       orderL.forEach(function (nk, i) {
         var x = Math.min(z.x2, z.x1 + i * spacing);
@@ -1090,6 +1110,10 @@
     // 节点 → elk 子节点
     var nodeElkMap = {};  // nodeId -> elkNode (成员节点入 pair 容器, 不直接进 group)
     var pairElkMap = {};  // pairId -> pair elk 容器
+    // 数据声明顺序索引: pair 容器需按其首个成员的声明位置插入 group children,
+    // 否则会全部追加到末尾, 导致 BUCK_04/05 排在 PAIR_01/02/03 之上, 纵向顺序错乱
+    var nodeIndex = {};
+    graph.nodeList().forEach(function (n, i) { nodeIndex[n.id] = i; });
     graph.nodeList().forEach(function (n) {
       if (hiddenNodeIds.has(n.id)) return;
       if (nodeToCollapsed[n.id]) return;   // 被折叠
@@ -1121,13 +1145,16 @@
             labels: [{ text: pairGroups[pid].label }],
             __isPair: true,
             __pairId: pid,
-            __noTitle: !!pairGroups[pid].noTitle
+            __noTitle: !!pairGroups[pid].noTitle,
+            __sortKey: nodeIndex[n.id]   // 首个成员的声明顺序, 用于按序插入
           };
         }
         pairElkMap[pid].children.push(elkNode);
         return;
       }
 
+      // 非 pair 节点: 记录声明顺序, 供后续 pair 容器按序插入定位
+      elkNode.__sortKey = nodeIndex[n.id];
       // 放到对应分组
       if (n.group && groupNodes[n.group]) {
         groupNodes[n.group].children.push(elkNode);
@@ -1136,14 +1163,21 @@
       }
     });
 
-    // 把 pair 容器按"多数成员所属 group"放进对应分组
+    // 把 pair 容器按"首个成员所属 group"放进对应分组, 并按声明顺序插入 (保持纵向顺序)
     Object.keys(pairElkMap).forEach(function (pid) {
       var container = pairElkMap[pid];
+      if (container.__sortKey == null) container.__sortKey = Infinity;
       var grpId = null;
       var first = container.children[0] && container.children[0].__node;
       if (first && first.group && groupNodes[first.group]) grpId = first.group;
-      if (grpId) groupNodes[grpId].children.push(container);
-      else root.children.push(container);
+      var targetChildren = grpId ? groupNodes[grpId].children : root.children;
+      // 按 __sortKey 插入到正确位置 (子分组无 __sortKey, 视为最前不动)
+      var insertAt = targetChildren.length;
+      for (var i = 0; i < targetChildren.length; i++) {
+        var ek = targetChildren[i].__sortKey;
+        if (ek != null && ek > container.__sortKey) { insertAt = i; break; }
+      }
+      targetChildren.splice(insertAt, 0, container);
       container.children.forEach(function (m) {
         // 成员节点坐标相对 pair 容器
         nodeElkMap[m.id] = m;
